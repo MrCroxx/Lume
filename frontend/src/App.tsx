@@ -1,16 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import {
-  ChevronDown,
-  Database,
-  FolderKanban,
-  HardDrive,
-  Layers3,
-  LogOut,
-  Network,
-  Settings2,
-  ShieldCheck,
-  UserCog,
-} from 'lucide-react'
+import { Database, Menu } from 'lucide-react'
 import { Toaster } from 'sonner'
 import { AdminPanel } from './components/AdminPanel'
 import { AccountSettingsDialog } from './components/AccountSettingsDialog'
@@ -18,13 +7,8 @@ import { Brand } from './components/Brand'
 import { ConnectionsOverview } from './components/ConnectionsOverview'
 import { Explorer } from './components/Explorer'
 import { LoginPage } from './components/LoginPage'
+import { MobileSidebar, Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from './components/ui/dropdown-menu'
 import { api, ApiError } from './lib/api'
 import {
   initializeBrowserHistory,
@@ -35,7 +19,6 @@ import {
   writeAppRoute,
 } from './lib/routes'
 import type { AppRoute } from './lib/routes'
-import { cn } from './lib/utils'
 import type { Session, Storage } from './types'
 
 function App() {
@@ -46,6 +29,8 @@ function App() {
   const [historyPosition, setHistoryPosition] = useState(initializeBrowserHistory)
   const [booting, setBooting] = useState(true)
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   const navigate = useCallback((nextRoute: AppRoute, replace = false) => {
     setHistoryPosition(writeAppRoute(nextRoute, replace))
@@ -63,6 +48,15 @@ function App() {
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    const desktopQuery = window.matchMedia('(min-width: 768px)')
+    const closeMobileSidebarOnDesktop = () => {
+      if (desktopQuery.matches) setMobileSidebarOpen(false)
+    }
+    desktopQuery.addEventListener('change', closeMobileSidebarOnDesktop)
+    return () => desktopQuery.removeEventListener('change', closeMobileSidebarOnDesktop)
   }, [])
 
   useEffect(() => {
@@ -107,8 +101,19 @@ function App() {
   }
 
   async function signOut() {
+    setMobileSidebarOpen(false)
     await api.logout()
     setSession(null)
+  }
+
+  function navigateFromSidebar(nextRoute: AppRoute) {
+    setMobileSidebarOpen(false)
+    navigate(nextRoute)
+  }
+
+  function openAccountSettings() {
+    setMobileSidebarOpen(false)
+    setAccountSettingsOpen(true)
   }
 
   if (booting) return <BootScreen />
@@ -136,121 +141,23 @@ function App() {
 
   return (
     <div className="flex h-full overflow-hidden bg-[#f7f8f9] text-slate-950">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-800 bg-[#111820] text-white md:flex">
-        <div className="flex h-[73px] items-center border-b border-white/5 px-5">
-          <div>
-            <Brand inverted size="sm" textClassName="text-lg text-white" />
-            <p className="mt-1 text-[10px] text-slate-500">Unified file workspace</p>
-          </div>
-        </div>
-
-        <nav className="p-3">
-          <NavButton
-            active={page === 'files'}
-            onClick={() => navigate({ page: 'files', storageId: null, path: '' })}
-          >
-            <FolderKanban className="size-4" />
-            Files
-          </NavButton>
-          {session.user.role === 'admin' && (
-            <NavButton active={page === 'admin'} onClick={() => navigate({ page: 'admin' })}>
-              <ShieldCheck className="size-4" />
-              Administration
-            </NavButton>
-          )}
-        </nav>
-
-        <div className="mx-4 border-t border-white/7" />
-        <div className="min-h-0 flex-1 overflow-auto px-3 py-5">
-          <p className="mb-2 px-2 font-mono text-[9px] uppercase tracking-[0.18em] text-slate-600">
-            Storage connections
-          </p>
-          <div className="space-y-1">
-            <button
-              onClick={() => {
-                navigate({ page: 'files', storageId: null, path: '' })
-              }}
-              className={cn(
-                'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                page === 'files' && selectedStorageId === null
-                  ? 'bg-white/10 text-white'
-                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200',
-              )}
-            >
-              <Layers3 className="size-4" />
-              <span className="min-w-0 flex-1 truncate">All connections</span>
-              <span className="font-mono text-[9px] uppercase text-slate-600">ALL</span>
-            </button>
-            {storages.map((storage) => {
-              const Icon = storageIcon(storage.kind)
-              return (
-                <button
-                  key={storage.id}
-                  onClick={() => {
-                    navigate({
-                      page: 'files',
-                      storageId: storage.id,
-                      path: storage.roots[0] ?? '',
-                    })
-                  }}
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                    page === 'files' && storage.id === selectedStorageId
-                      ? 'bg-white/10 text-white'
-                      : 'text-slate-400 hover:bg-white/5 hover:text-slate-200',
-                  )}
-                >
-                  <Icon className="size-4" />
-                  <span className="min-w-0 flex-1 truncate">{storage.name}</span>
-                  <span className="font-mono text-[9px] uppercase text-slate-600">{storage.kind}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="border-t border-white/5 p-3">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-white/5">
-                <span className="grid size-8 place-items-center rounded-full bg-emerald-400 text-xs font-semibold text-slate-950">
-                  {session.user.username.slice(0, 2).toUpperCase()}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-slate-200">
-                    {session.user.username}
-                  </span>
-                  <span className="block text-[10px] capitalize text-slate-500">
-                    {session.auth_method === 'bypass' ? 'Trusted network' : session.user.role}
-                  </span>
-                </span>
-                <ChevronDown className="size-3.5 text-slate-600" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              {session.auth_method === 'session' && (
-                <DropdownMenuItem onSelect={() => setAccountSettingsOpen(true)}>
-                  <UserCog className="size-4" />
-                  Account settings
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => void signOut()}>
-                <LogOut className="size-4" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </aside>
+      <Sidebar
+        session={session}
+        storages={storages}
+        page={page}
+        selectedStorageId={selectedStorageId}
+        collapsed={sidebarCollapsed}
+        className="hidden md:flex"
+        onNavigate={navigateFromSidebar}
+        onAccount={openAccountSettings}
+        onLogout={signOut}
+        onCollapseToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
+      />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <MobileHeader
-          session={session}
-          page={page}
-          onFiles={() => navigate({ page: 'files', storageId: null, path: '' })}
-          onAdmin={() => navigate({ page: 'admin' })}
-          onAccount={() => setAccountSettingsOpen(true)}
-          onLogout={signOut}
+          open={mobileSidebarOpen}
+          onToggleSidebar={() => setMobileSidebarOpen((open) => !open)}
         />
         {page === 'admin' && session.user.role === 'admin' ? (
           <AdminPanel
@@ -283,6 +190,17 @@ function App() {
           <NoStorage />
         )}
       </div>
+      <MobileSidebar
+        open={mobileSidebarOpen}
+        onOpenChange={setMobileSidebarOpen}
+        session={session}
+        storages={storages}
+        page={page}
+        selectedStorageId={selectedStorageId}
+        onNavigate={navigateFromSidebar}
+        onAccount={openAccountSettings}
+        onLogout={signOut}
+      />
       <AccountSettingsDialog
         session={session}
         open={accountSettingsOpen}
@@ -294,63 +212,26 @@ function App() {
   )
 }
 
-function NavButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'mb-1 flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-colors',
-        active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200',
-      )}
-    >
-      {children}
-    </button>
-  )
-}
-
 function MobileHeader({
-  session,
-  page,
-  onFiles,
-  onAdmin,
-  onAccount,
-  onLogout,
+  open,
+  onToggleSidebar,
 }: {
-  session: Session
-  page: 'files' | 'admin'
-  onFiles: () => void
-  onAdmin: () => void
-  onAccount: () => void
-  onLogout: () => Promise<void>
+  open: boolean
+  onToggleSidebar: () => void
 }) {
   return (
     <div className="flex h-14 items-center gap-2 border-b border-slate-200 bg-white px-4 md:hidden">
       <Brand size="sm" className="mr-auto" textClassName="text-sm" />
-      <Button variant={page === 'files' ? 'secondary' : 'ghost'} size="sm" onClick={onFiles}>
-        Files
-      </Button>
-      {session.user.role === 'admin' && (
-        <Button variant={page === 'admin' ? 'secondary' : 'ghost'} size="sm" onClick={onAdmin}>
-          <Settings2 className="size-3.5" />
-        </Button>
-      )}
-      {session.auth_method === 'session' && (
-        <Button variant="ghost" size="icon" className="size-8" onClick={onAccount}>
-          <UserCog className="size-4" />
-          <span className="sr-only">Account settings</span>
-        </Button>
-      )}
-      <Button variant="ghost" size="icon" className="size-8" onClick={() => void onLogout()}>
-        <LogOut className="size-4" />
-        <span className="sr-only">Sign out</span>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-8"
+        aria-label={open ? 'Close sidebar' : 'Open sidebar'}
+        aria-controls="mobile-sidebar"
+        aria-expanded={open}
+        onClick={onToggleSidebar}
+      >
+        <Menu className="size-4" />
       </Button>
     </div>
   )
@@ -378,12 +259,6 @@ function BootScreen() {
       <Brand inverted size="lg" textClassName="text-3xl text-white" />
     </main>
   )
-}
-
-function storageIcon(kind: Storage['kind']) {
-  if (kind === 'webdav' || kind === 'ftp' || kind === 'sftp') return Network
-  if (kind === 's3') return Database
-  return HardDrive
 }
 
 function accessibleStoragePath(storage: Storage, path: string) {

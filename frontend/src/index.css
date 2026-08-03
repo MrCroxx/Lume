@@ -36,6 +36,69 @@ button {
   cursor: pointer;
 }
 
+.mobile-sidebar-overlay[data-state="open"] {
+  animation: mobile-sidebar-overlay-show 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mobile-sidebar-overlay[data-state="closed"] {
+  animation: mobile-sidebar-overlay-hide 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mobile-sidebar-panel[data-state="open"] {
+  animation: mobile-sidebar-slide-in 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mobile-sidebar-panel[data-state="closed"] {
+  animation: mobile-sidebar-slide-out 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes mobile-sidebar-overlay-show {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes mobile-sidebar-overlay-hide {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes mobile-sidebar-slide-in {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes mobile-sidebar-slide-out {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-sidebar-overlay,
+  .mobile-sidebar-panel {
+    animation-duration: 1ms !important;
+  }
+}
+
 .login-grid {
   background-image:
     linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
