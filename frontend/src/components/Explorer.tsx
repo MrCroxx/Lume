@@ -11,9 +11,9 @@ import {
   FileImage,
   FileText,
   Folder,
+  FolderPlus,
   FolderOpen,
   LoaderCircle,
-  Plus,
   RefreshCw,
   Search,
   Trash2,
@@ -284,62 +284,80 @@ export function Explorer({
               aria-label="Search files"
             />
           </div>
-          <Button variant="secondary" size="icon" onClick={() => void loadFiles()} aria-label="Refresh">
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => void loadFiles()}
+            aria-label="Refresh files"
+            title="Refresh files"
+          >
             <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
           </Button>
           {selectedEntries.length > 0 && (
-            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="mr-1 whitespace-nowrap text-xs font-medium text-slate-500">
                 {selectedEntries.length} selected
               </span>
               <Button
                 variant="secondary"
-                size="sm"
+                size="icon"
                 onClick={selection.clear}
                 disabled={batchDeleting || archivePreparing}
+                aria-label="Clear selection"
+                title="Clear selection"
               >
-                <X className="size-3.5" />
-                Clear
+                <X className="size-4" />
               </Button>
               <Button
                 variant="secondary"
-                size="sm"
+                size="icon"
                 disabled={batchDeleting || archivePreparing}
                 onClick={() => void downloadSelected(selectedEntries)}
+                aria-label="Download selected items"
+                title="Download selected items"
               >
                 {archivePreparing ? (
-                  <LoaderCircle className="size-3.5 animate-spin" />
+                  <LoaderCircle className="size-4 animate-spin" />
                 ) : (
-                  <ArrowDownToLine className="size-3.5" />
+                  <ArrowDownToLine className="size-4" />
                 )}
-                Download
               </Button>
               {storage.can_write && (
                 <Button
                   variant="danger"
-                  size="sm"
+                  size="icon"
                   disabled={batchDeleting || archivePreparing}
                   onClick={() => void removeSelected(selectedEntries)}
+                  aria-label="Delete selected items"
+                  title="Delete selected items"
                 >
                   {batchDeleting ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
+                    <LoaderCircle className="size-4 animate-spin" />
                   ) : (
-                    <Trash2 className="size-3.5" />
+                    <Trash2 className="size-4" />
                   )}
-                  Delete
                 </Button>
               )}
             </div>
           )}
           {storage.can_write && (
             <>
-              <Button variant="secondary" onClick={() => setFolderOpen(true)}>
-                <Plus className="size-4" />
-                <span className="hidden sm:inline">New folder</span>
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={() => setFolderOpen(true)}
+                aria-label="Create folder"
+                title="Create folder"
+              >
+                <FolderPlus className="size-4" />
               </Button>
-              <Button onClick={() => uploadRef.current?.click()}>
+              <Button
+                size="icon"
+                onClick={() => uploadRef.current?.click()}
+                aria-label="Upload files"
+                title="Upload files"
+              >
                 <Upload className="size-4" />
-                Upload
               </Button>
               <input
                 ref={uploadRef}
