@@ -382,42 +382,44 @@ export function Explorer({
             </p>
           </div>
 
-          <div className="min-w-[680px]">
-            <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
-              <SelectionCheckbox
-                checked={selection.allVisibleSelected}
-                indeterminate={selectedEntries.length > 0 && !selection.allVisibleSelected}
-                disabled={visibleEntries.length === 0 || loading}
-                label="Select all visible items"
-                onToggle={selection.toggleAllVisible}
-              />
-              <span>Name</span>
-              <span>Size</span>
-              <span>Modified</span>
-            </div>
-            {loading && visibleEntries.length === 0 ? (
-              <div className="grid h-64 place-items-center text-slate-400">
-                <LoaderCircle className="size-5 animate-spin" />
-              </div>
-            ) : visibleEntries.length === 0 ? (
-              <EmptyState search={query.trim().length >= 2} />
-            ) : (
-              visibleEntries.map((entry) => (
-                <FileRow
-                  key={entry.path}
-                  entry={entry}
-                  selected={selection.selectedKeys.has(entry.path)}
-                  onToggleSelection={(range) => selection.toggle(entry.path, range)}
-                  onOpen={() => {
-                    if (entry.kind === 'directory') {
-                      navigateTo(ensureDirectory(entry.path))
-                    } else {
-                      window.location.assign(api.downloadUrl(storage.id, entry.path))
-                    }
-                  }}
+          <div className="overflow-x-auto overscroll-x-contain">
+            <div className="min-w-[680px]">
+              <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                <SelectionCheckbox
+                  checked={selection.allVisibleSelected}
+                  indeterminate={selectedEntries.length > 0 && !selection.allVisibleSelected}
+                  disabled={visibleEntries.length === 0 || loading}
+                  label="Select all visible items"
+                  onToggle={selection.toggleAllVisible}
                 />
-              ))
-            )}
+                <span>Name</span>
+                <span>Size</span>
+                <span>Modified</span>
+              </div>
+              {loading && visibleEntries.length === 0 ? (
+                <div className="grid h-64 place-items-center text-slate-400">
+                  <LoaderCircle className="size-5 animate-spin" />
+                </div>
+              ) : visibleEntries.length === 0 ? (
+                <EmptyState search={query.trim().length >= 2} />
+              ) : (
+                visibleEntries.map((entry) => (
+                  <FileRow
+                    key={entry.path}
+                    entry={entry}
+                    selected={selection.selectedKeys.has(entry.path)}
+                    onToggleSelection={(range) => selection.toggle(entry.path, range)}
+                    onOpen={() => {
+                      if (entry.kind === 'directory') {
+                        navigateTo(ensureDirectory(entry.path))
+                      } else {
+                        window.location.assign(api.downloadUrl(storage.id, entry.path))
+                      }
+                    }}
+                  />
+                ))
+              )}
+            </div>
           </div>
         </section>
       </main>
