@@ -1,0 +1,29 @@
+# Rust build artifacts
+/target/
+
+# Frontend dependencies and build artifacts
+/frontend/node_modules/
+/frontend/dist/
+
+# Runtime state and machine-local configuration
+/data/
+/config.toml
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Secrets and local databases
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.pem
+
+# Logs and editor metadata
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp

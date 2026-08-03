@@ -1,0 +1,14 @@
+# Only bootstrap settings live here. Runtime settings, trusted access rules,
+# users, permissions, and storage connections are managed in the Web UI and
+# persisted in SQLite.
+
+[server]
+address = "0.0.0.0:8080"
+frontend_dist = "frontend/dist"
+
+[database]
+url = "sqlite://data/lume.db"
+
+[auth]
+bootstrap_admin_username = "admin"
+bootstrap_admin_password_env = "LUME_ADMIN_PASSWORD"
