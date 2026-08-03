@@ -287,6 +287,50 @@ export function Explorer({
           <Button variant="secondary" size="icon" onClick={() => void loadFiles()} aria-label="Refresh">
             <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
           </Button>
+          {selectedEntries.length > 0 && (
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
+              <span className="mr-1 whitespace-nowrap text-xs font-medium text-slate-500">
+                {selectedEntries.length} selected
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={selection.clear}
+                disabled={batchDeleting || archivePreparing}
+              >
+                <X className="size-3.5" />
+                Clear
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={batchDeleting || archivePreparing}
+                onClick={() => void downloadSelected(selectedEntries)}
+              >
+                {archivePreparing ? (
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                ) : (
+                  <ArrowDownToLine className="size-3.5" />
+                )}
+                Download
+              </Button>
+              {storage.can_write && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={batchDeleting || archivePreparing}
+                  onClick={() => void removeSelected(selectedEntries)}
+                >
+                  {batchDeleting ? (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-3.5" />
+                  )}
+                  Delete
+                </Button>
+              )}
+            </div>
+          )}
           {storage.can_write && (
             <>
               <Button variant="secondary" onClick={() => setFolderOpen(true)}>
@@ -311,59 +355,13 @@ export function Explorer({
 
       <main className="min-h-0 flex-1 overflow-auto overscroll-contain bg-[#f7f8f9] p-5 sm:p-8">
         <section className="mx-auto max-w-[1500px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.025)]">
-          <div className="flex min-h-[69px] flex-col items-stretch gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <div className="min-w-0">
-              <h1 className="text-sm font-semibold text-slate-950">
-                {query.trim().length >= 2 ? `Results for “${query.trim()}”` : 'Files'}
-              </h1>
-              <p className="mt-0.5 text-xs text-slate-400">
-                {visibleEntries.length} item{visibleEntries.length === 1 ? '' : 's'} · {storage.kind.toUpperCase()}
-              </p>
-            </div>
-            {selectedEntries.length > 0 && (
-              <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
-                <span className="mr-1 whitespace-nowrap text-xs font-medium text-slate-500">
-                  {selectedEntries.length} selected
-                </span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={selection.clear}
-                  disabled={batchDeleting || archivePreparing}
-                >
-                  <X className="size-3.5" />
-                  Clear
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={batchDeleting || archivePreparing}
-                  onClick={() => void downloadSelected(selectedEntries)}
-                >
-                  {archivePreparing ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
-                    <ArrowDownToLine className="size-3.5" />
-                  )}
-                  Download
-                </Button>
-                {storage.can_write && (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    disabled={batchDeleting || archivePreparing}
-                    onClick={() => void removeSelected(selectedEntries)}
-                  >
-                    {batchDeleting ? (
-                      <LoaderCircle className="size-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-3.5" />
-                    )}
-                    Delete
-                  </Button>
-                )}
-              </div>
-            )}
+          <div className="min-h-[69px] border-b border-slate-100 px-5 py-4">
+            <h1 className="text-sm font-semibold text-slate-950">
+              {query.trim().length >= 2 ? `Results for “${query.trim()}”` : 'Files'}
+            </h1>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {visibleEntries.length} item{visibleEntries.length === 1 ? '' : 's'} · {storage.kind.toUpperCase()}
+            </p>
           </div>
 
           <div className="min-w-[680px]">
