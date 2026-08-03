@@ -219,37 +219,32 @@ export function Explorer({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="border-b border-slate-200 bg-white px-5 py-4 sm:px-8">
-        <div className="explorer-toolbar mx-auto flex max-w-[1500px] flex-wrap items-center gap-3">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-3">
           <div className="flex items-center gap-1">
             <Button
               variant="secondary"
               size="icon"
-              className="explorer-toolbar-button"
               disabled={!canGoBack}
               onClick={onBack}
               aria-label="Go back"
               title="Go back"
             >
               <ArrowLeft className="size-4" />
-              <span className="explorer-toolbar-label">Back</span>
             </Button>
             <Button
               variant="secondary"
               size="icon"
-              className="explorer-toolbar-button"
               disabled={!canGoForward}
               onClick={onForward}
               aria-label="Go forward"
               title="Go forward"
             >
               <ArrowRight className="size-4" />
-              <span className="explorer-toolbar-label">Forward</span>
             </Button>
           </div>
           <Button
             variant="secondary"
             size="icon"
-            className="explorer-toolbar-button"
             disabled={parent === null}
             onClick={() => {
               if (parent === null) return
@@ -259,7 +254,6 @@ export function Explorer({
             title="Go to parent directory"
           >
             <ArrowUp className="size-4" />
-            <span className="explorer-toolbar-label">Up</span>
           </Button>
           <div className="mr-auto flex min-w-0 items-center gap-1 text-sm">
             <button
@@ -293,13 +287,11 @@ export function Explorer({
           <Button
             variant="secondary"
             size="icon"
-            className="explorer-toolbar-button"
             onClick={() => void loadFiles()}
             aria-label="Refresh files"
             title="Refresh files"
           >
             <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
-            <span className="explorer-toolbar-label">Refresh</span>
           </Button>
           {selectedEntries.length > 0 && (
             <div className="flex min-w-0 items-center gap-2">
@@ -309,19 +301,16 @@ export function Explorer({
               <Button
                 variant="secondary"
                 size="icon"
-                className="explorer-toolbar-button"
                 onClick={selection.clear}
                 disabled={batchDeleting || archivePreparing}
                 aria-label="Clear selection"
                 title="Clear selection"
               >
                 <X className="size-4" />
-                <span className="explorer-toolbar-label">Clear</span>
               </Button>
               <Button
                 variant="secondary"
                 size="icon"
-                className="explorer-toolbar-button"
                 disabled={batchDeleting || archivePreparing}
                 onClick={() => void downloadSelected(selectedEntries)}
                 aria-label="Download selected items"
@@ -332,13 +321,11 @@ export function Explorer({
                 ) : (
                   <ArrowDownToLine className="size-4" />
                 )}
-                <span className="explorer-toolbar-label">Download</span>
               </Button>
               {storage.can_write && (
                 <Button
                   variant="danger"
                   size="icon"
-                  className="explorer-toolbar-button"
                   disabled={batchDeleting || archivePreparing}
                   onClick={() => void removeSelected(selectedEntries)}
                   aria-label="Delete selected items"
@@ -349,7 +336,6 @@ export function Explorer({
                   ) : (
                     <Trash2 className="size-4" />
                   )}
-                  <span className="explorer-toolbar-label">Delete</span>
                 </Button>
               )}
             </div>
@@ -359,23 +345,19 @@ export function Explorer({
               <Button
                 variant="secondary"
                 size="icon"
-                className="explorer-toolbar-button"
                 onClick={() => setFolderOpen(true)}
                 aria-label="Create folder"
                 title="Create folder"
               >
                 <FolderPlus className="size-4" />
-                <span className="explorer-toolbar-label">New folder</span>
               </Button>
               <Button
                 size="icon"
-                className="explorer-toolbar-button"
                 onClick={() => uploadRef.current?.click()}
                 aria-label="Upload files"
                 title="Upload files"
               >
                 <Upload className="size-4" />
-                <span className="explorer-toolbar-label">Upload</span>
               </Button>
               <input
                 ref={uploadRef}

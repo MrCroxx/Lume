@@ -36,25 +36,6 @@ button {
   cursor: pointer;
 }
 
-.explorer-toolbar {
-  container-type: inline-size;
-}
-
-.explorer-toolbar-label {
-  display: none;
-}
-
-@container (min-width: 92rem) {
-  .explorer-toolbar-button {
-    width: auto;
-    padding-inline: 0.875rem;
-  }
-
-  .explorer-toolbar-label {
-    display: inline;
-  }
-}
-
 .mobile-sidebar-overlay[data-state="open"] {
   animation: mobile-sidebar-overlay-show 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
