@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+target
+data
+config.toml
+frontend/dist
+frontend/node_modules
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.log
