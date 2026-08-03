@@ -6,6 +6,7 @@ use ipnet::IpNet;
 use sqlx::SqlitePool;
 
 use crate::{
+    archive::ArchiveTickets,
     config::Config,
     db,
     models::RuntimeSettingsView,
@@ -19,6 +20,7 @@ pub struct AppState {
     pub storages: Arc<ArcSwap<HashMap<String, Arc<Storage>>>>,
     pub settings: Arc<ArcSwap<RuntimeSettings>>,
     pub cipher: Arc<SecretCipher>,
+    pub archive_tickets: ArchiveTickets,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,7 @@ impl AppState {
             storages: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             settings: Arc::new(ArcSwap::from_pointee(settings)),
             cipher,
+            archive_tickets: ArchiveTickets::new(),
         };
         state.reload_storages().await?;
         Ok(state)

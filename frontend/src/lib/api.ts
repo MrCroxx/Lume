@@ -1,4 +1,7 @@
 import type {
+  ArchiveRequest,
+  ArchiveTicket,
+  BatchDeleteResult,
   FileEntry,
   LoginOptions,
   Permission,
@@ -20,6 +23,8 @@ export class ApiError extends Error {
     this.status = status
   }
 }
+
+const BATCH_DELETE_SIZE = 500
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -94,6 +99,48 @@ export const api = {
       }),
       { method: 'DELETE' },
     ),
+  removeMany: async (storageId: string, entries: FileEntry[]) => {
+    const result: BatchDeleteResult = { deleted: [], failed: [] }
+    for (let offset = 0; offset < entries.length; offset += BATCH_DELETE_SIZE) {
+      const batch = entries.slice(offset, offset + BATCH_DELETE_SIZE)
+      try {
+        const batchResult = await request<BatchDeleteResult>(
+          `/api/files/${storageId}/batch-delete`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              entries: batch.map((entry) => ({
+                path: entry.path,
+                recursive: entry.kind === 'directory',
+              })),
+            }),
+          },
+        )
+        result.deleted.push(...batchResult.deleted)
+        result.failed.push(...batchResult.failed)
+      } catch (reason) {
+        const error = reason instanceof Error ? reason.message : 'Batch delete failed'
+        result.failed.push(
+          ...entries.slice(offset).map((entry) => ({ path: entry.path, error })),
+        )
+        break
+      }
+    }
+    return result
+  },
+  prepareArchive: (payload: ArchiveRequest) =>
+    request<ArchiveTicket>('/api/archives', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  startArchiveDownload: (ticket: ArchiveTicket) => {
+    const link = document.createElement('a')
+    link.href = ticket.download_url
+    link.download = ticket.filename
+    document.body.append(link)
+    link.click()
+    link.remove()
+  },
   downloadUrl: (storageId: string, path: string) =>
     withQuery(`/api/files/${storageId}/download`, { path }),
   users: () => request<User[]>('/api/admin/users'),

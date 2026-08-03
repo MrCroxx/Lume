@@ -28,12 +28,13 @@ use crate::{
     config::StorageConfig,
     error::{AppError, AppResult},
     models::{
-        Access, CreateDirectoryRequest, CreateUserRequest, FileEntry, GrantPermissionRequest,
-        LoginOptionsRequest, LoginOptionsView, LoginRequest, MoveRequest, PermissionRecord,
-        RuntimeSettingsView, SaveStorageConnectionRequest, SaveTrustedAccessRuleRequest,
-        SessionView, StorageConnectionRecord, StorageConnectionView, StorageView,
-        TrustedAccessRuleRecord, TrustedAccessRuleView, UpdateAccountRequest,
-        UpdateRuntimeSettingsRequest, UpdateUserRequest, UserRecord, UserView,
+        Access, BatchDeleteFailure, BatchDeleteRequest, BatchDeleteResult, CreateDirectoryRequest,
+        CreateUserRequest, FileEntry, GrantPermissionRequest, LoginOptionsRequest,
+        LoginOptionsView, LoginRequest, MoveRequest, PermissionRecord, RuntimeSettingsView,
+        SaveStorageConnectionRequest, SaveTrustedAccessRuleRequest, SessionView,
+        StorageConnectionRecord, StorageConnectionView, StorageView, TrustedAccessRuleRecord,
+        TrustedAccessRuleView, UpdateAccountRequest, UpdateRuntimeSettingsRequest,
+        UpdateUserRequest, UserRecord, UserView,
     },
     state::{AppState, parse_cidrs},
     storage::{Storage, build_storage, normalize_path, path_is_within, paths_equal},
@@ -41,9 +42,11 @@ use crate::{
 
 const MAX_SEARCH_LIMIT: usize = 500;
 const MAX_SEARCH_SCANNED: usize = 50_000;
+const MAX_BATCH_DELETE_ENTRIES: usize = 500;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .merge(crate::archive::router())
         .route("/api/health", get(health))
         .route("/api/auth/login-options", post(login_options))
         .route("/api/auth/login", post(login))
@@ -55,6 +58,10 @@ pub fn router(state: AppState) -> Router {
             get(list_files).put(upload_file).delete(delete_file),
         )
         .route("/api/files/{storage_id}/directory", post(create_directory))
+        .route(
+            "/api/files/{storage_id}/batch-delete",
+            post(batch_delete_files),
+        )
         .route("/api/files/{storage_id}/download", get(download_file))
         .route("/api/files/{storage_id}/move", post(move_file))
         .route("/api/search/{storage_id}", get(search_files))
@@ -423,6 +430,111 @@ async fn delete_file(
         storage.operator.delete(&path).await?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug)]
+struct NormalizedDeleteEntry {
+    path: String,
+    recursive: bool,
+}
+
+async fn batch_delete_files(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(storage_id): Path<String>,
+    Json(request): Json<BatchDeleteRequest>,
+) -> AppResult<Json<BatchDeleteResult>> {
+    if request.entries.is_empty() {
+        return Err(AppError::BadRequest(
+            "at least one entry is required".into(),
+        ));
+    }
+    if request.entries.len() > MAX_BATCH_DELETE_ENTRIES {
+        return Err(AppError::BadRequest(format!(
+            "a batch can contain at most {MAX_BATCH_DELETE_ENTRIES} entries"
+        )));
+    }
+
+    let storage = get_storage(&state, &storage_id)?;
+    let entries = normalize_delete_entries(request)?;
+    let mut result = BatchDeleteResult {
+        deleted: Vec::with_capacity(entries.len()),
+        failed: Vec::new(),
+    };
+
+    for entry in entries {
+        let delete_result = async {
+            require_access(&state, &auth, &storage_id, &entry.path, Access::Write).await?;
+            if entry.recursive {
+                storage
+                    .operator
+                    .delete_with(&entry.path)
+                    .recursive(true)
+                    .await?;
+            } else {
+                storage.operator.delete(&entry.path).await?;
+            }
+            AppResult::Ok(())
+        }
+        .await;
+
+        match delete_result {
+            Ok(()) => result.deleted.push(entry.path),
+            Err(error) => result.failed.push(BatchDeleteFailure {
+                path: entry.path,
+                error: batch_error_message(&error),
+            }),
+        }
+    }
+
+    Ok(Json(result))
+}
+
+fn normalize_delete_entries(request: BatchDeleteRequest) -> AppResult<Vec<NormalizedDeleteEntry>> {
+    let mut entries = request
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let path = normalize_path(&entry.path, entry.recursive).map_err(bad_request)?;
+            if path.is_empty() {
+                return Err(AppError::BadRequest(
+                    "deleting a storage root is not allowed".into(),
+                ));
+            }
+            Ok(NormalizedDeleteEntry {
+                path,
+                recursive: entry.recursive,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
+    entries.sort_by(|left, right| {
+        left.path
+            .len()
+            .cmp(&right.path.len())
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let mut normalized = Vec::<NormalizedDeleteEntry>::with_capacity(entries.len());
+    for entry in entries {
+        if normalized.iter().any(|parent| {
+            paths_equal(&parent.path, &entry.path)
+                || (parent.recursive && path_is_within(&entry.path, &parent.path))
+        }) {
+            continue;
+        }
+        normalized.push(entry);
+    }
+    Ok(normalized)
+}
+
+fn batch_error_message(error: &AppError) -> String {
+    match error {
+        AppError::Internal(internal) => {
+            tracing::error!(error = ?internal, "batch delete entry failed");
+            "internal server error".into()
+        }
+        _ => error.to_string(),
+    }
 }
 
 async fn move_file(
@@ -1454,6 +1566,50 @@ fn bad_request(error: anyhow::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::BatchDeleteEntryRequest;
+
+    #[test]
+    fn batch_delete_collapses_duplicates_and_descendants() {
+        let entries = normalize_delete_entries(BatchDeleteRequest {
+            entries: vec![
+                BatchDeleteEntryRequest {
+                    path: "projects/report.txt".into(),
+                    recursive: false,
+                },
+                BatchDeleteEntryRequest {
+                    path: "projects".into(),
+                    recursive: true,
+                },
+                BatchDeleteEntryRequest {
+                    path: "archive.zip".into(),
+                    recursive: false,
+                },
+                BatchDeleteEntryRequest {
+                    path: "archive.zip".into(),
+                    recursive: false,
+                },
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "projects/");
+        assert!(entries[0].recursive);
+        assert_eq!(entries[1].path, "archive.zip");
+        assert!(!entries[1].recursive);
+    }
+
+    #[test]
+    fn batch_delete_rejects_storage_root() {
+        let result = normalize_delete_entries(BatchDeleteRequest {
+            entries: vec![BatchDeleteEntryRequest {
+                path: "/".into(),
+                recursive: true,
+            }],
+        });
+
+        assert!(matches!(result, Err(AppError::BadRequest(_))));
+    }
 
     #[test]
     fn password_validation_has_no_length_requirement() {

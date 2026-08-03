@@ -188,6 +188,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "async_zip"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d8c50d65ce1b0e0cb65a785ff615f78860d7754290647d3b983208daa4f85e6"
+dependencies = [
+ "crc32fast",
+ "futures-lite",
+ "pin-project",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -646,6 +660,15 @@ checksum = "e75b2483e97a5a7da73ac68a05b629f9c53cff58d8ed1c77866079e18b00dba5"
 dependencies = [
  "digest 0.10.7",
  "spin 0.10.1",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -1678,6 +1701,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "argon2",
+ "async_zip",
  "axum",
  "axum-extra",
  "base64 0.23.0",
@@ -1687,6 +1711,7 @@ dependencies = [
  "ipnet",
  "mime_guess",
  "opendal",
+ "percent-encoding",
  "rand",
  "rand_core 0.6.4",
  "serde",
@@ -1696,6 +1721,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "toml",
  "tower-http 0.7.0",
  "tracing",
@@ -3367,6 +3393,7 @@ checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",

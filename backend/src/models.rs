@@ -250,6 +250,30 @@ pub struct MoveRequest {
     pub to: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BatchDeleteRequest {
+    pub entries: Vec<BatchDeleteEntryRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchDeleteEntryRequest {
+    pub path: String,
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchDeleteResult {
+    pub deleted: Vec<String>,
+    pub failed: Vec<BatchDeleteFailure>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchDeleteFailure {
+    pub path: String,
+    pub error: String,
+}
+
 fn default_role() -> String {
     "member".into()
 }

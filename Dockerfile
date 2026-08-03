@@ -37,7 +37,9 @@ WORKDIR /app
 COPY --from=backend-builder --chown=lume:lume /lume-server /usr/local/bin/lume-server
 COPY --from=frontend-builder --chown=lume:lume /app/frontend/dist /app/frontend/dist
 
-RUN mkdir --parents /app/data && chown lume:lume /app/data
+RUN chmod --recursive a+rX /app/frontend/dist \
+    && mkdir --parents /app/data \
+    && chown lume:lume /app/data
 
 ENV LUME_ADDRESS=0.0.0.0:8080 \
     LUME_DATABASE_URL=sqlite:///app/data/lume.db \
