@@ -33,6 +33,30 @@ export interface FileEntry {
   modified_at: string | null
 }
 
+export interface BatchDeleteResult {
+  deleted: string[]
+  failed: Array<{
+    path: string
+    error: string
+  }>
+}
+
+export interface ArchiveEntry {
+  storage_id: string
+  path: string
+  kind: FileEntry['kind']
+}
+
+export interface ArchiveRequest {
+  base_path?: string
+  entries: ArchiveEntry[]
+}
+
+export interface ArchiveTicket {
+  download_url: string
+  filename: string
+}
+
 export interface Permission {
   id: string
   user_id: string

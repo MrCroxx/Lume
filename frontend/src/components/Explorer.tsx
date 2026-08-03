@@ -13,7 +13,6 @@ import {
   Folder,
   FolderOpen,
   LoaderCircle,
-  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
@@ -22,18 +21,14 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
+import { useEntrySelection } from '../lib/entry-selection'
 import { normalizeDirectoryPath, pathIsWithin } from '../lib/routes'
 import { cn, formatBytes, formatDate } from '../lib/utils'
 import type { FileEntry, Storage } from '../types'
 import { Button } from './ui/button'
 import { Dialog } from './ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu'
 import { Input } from './ui/input'
+import { SelectionCheckbox } from './SelectionCheckbox'
 
 export function Explorer({
   storage,
@@ -61,6 +56,8 @@ export function Explorer({
   const [searchLoading, setSearchLoading] = useState(false)
   const [folderOpen, setFolderOpen] = useState(false)
   const [folderName, setFolderName] = useState('')
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  const [archivePreparing, setArchivePreparing] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
   const listRequestId = useRef(0)
   const searchRequestId = useRef(0)
@@ -141,14 +138,67 @@ export function Explorer({
     }
   }
 
-  async function remove(entry: FileEntry) {
-    if (!window.confirm(`Delete “${entry.name}”? This action cannot be undone.`)) return
+  async function removeSelected(selectedEntries: FileEntry[]) {
+    const directoryCount = selectedEntries.filter((entry) => entry.kind === 'directory').length
+    const detail = directoryCount
+      ? ` This includes ${directoryCount} director${directoryCount === 1 ? 'y' : 'ies'} and all of their contents.`
+      : ''
+    if (
+      !window.confirm(
+        `Delete ${selectedEntries.length} selected item${selectedEntries.length === 1 ? '' : 's'}?${detail} This action cannot be undone.`,
+      )
+    )
+      return
+
+    setBatchDeleting(true)
     try {
-      await api.remove(storage.id, entry)
-      toast.success(`Deleted ${entry.name}`)
+      const result = await api.removeMany(storage.id, selectedEntries)
+      const failedRoots = result.failed.map((failure) => failure.path)
+      const failedPaths = new Set(
+        selectedEntries
+          .filter((entry) => failedRoots.some((failedRoot) => pathIsWithin(entry.path, failedRoot)))
+          .map((entry) => entry.path),
+      )
+      const deletedCount = selectedEntries.length - failedPaths.size
+      selection.replace(failedPaths)
+      if (failedPaths.size === 0) {
+        toast.success(`Deleted ${deletedCount} item${deletedCount === 1 ? '' : 's'}`)
+      } else {
+        toast.error(
+          `Deleted ${deletedCount} item${deletedCount === 1 ? '' : 's'}; ${failedPaths.size} failed`,
+          {
+            description: result.failed
+              .slice(0, 3)
+              .map((failure) => `${failure.path}: ${failure.error}`)
+              .join('\n'),
+          },
+        )
+      }
       await loadFiles()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Delete failed')
+      toast.error(reason instanceof Error ? reason.message : 'Batch delete failed')
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
+
+  async function downloadSelected(selectedEntries: FileEntry[]) {
+    setArchivePreparing(true)
+    try {
+      const ticket = await api.prepareArchive({
+        base_path: path,
+        entries: selectedEntries.map((entry) => ({
+          storage_id: storage.id,
+          path: entry.path,
+          kind: entry.kind,
+        })),
+      })
+      api.startArchiveDownload(ticket)
+      toast.success('Archive download started')
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'Unable to prepare archive')
+    } finally {
+      setArchivePreparing(false)
     }
   }
 
@@ -161,6 +211,9 @@ export function Explorer({
   const parent = useMemo(() => parentDirectory(path, storageRoot), [path, storageRoot])
   const loading = listLoading || searchLoading
   const visibleEntries = query.trim().length >= 2 ? searchResults : entries
+  const visiblePaths = useMemo(() => visibleEntries.map((entry) => entry.path), [visibleEntries])
+  const selection = useEntrySelection(visiblePaths, `${storage.id}\0${path}\0${query}`)
+  const selectedEntries = visibleEntries.filter((entry) => selection.selectedKeys.has(entry.path))
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -257,7 +310,7 @@ export function Explorer({
 
       <main className="min-h-0 flex-1 overflow-auto overscroll-contain bg-[#f7f8f9] p-5 sm:p-8">
         <section className="mx-auto max-w-[1500px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.025)]">
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div className="flex min-h-[69px] items-center justify-between gap-4 border-b border-slate-100 px-5 py-4">
             <div>
               <h1 className="text-sm font-semibold text-slate-950">
                 {query.trim().length >= 2 ? `Results for “${query.trim()}”` : 'Files'}
@@ -266,14 +319,63 @@ export function Explorer({
                 {visibleEntries.length} item{visibleEntries.length === 1 ? '' : 's'} · {storage.kind.toUpperCase()}
               </p>
             </div>
+            {selectedEntries.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="mr-1 text-xs font-medium text-slate-500">
+                  {selectedEntries.length} selected
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={selection.clear}
+                  disabled={batchDeleting || archivePreparing}
+                >
+                  Clear
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={batchDeleting || archivePreparing}
+                  onClick={() => void downloadSelected(selectedEntries)}
+                >
+                  {archivePreparing ? (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  ) : (
+                    <ArrowDownToLine className="size-3.5" />
+                  )}
+                  Download
+                </Button>
+                {storage.can_write && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={batchDeleting || archivePreparing}
+                    onClick={() => void removeSelected(selectedEntries)}
+                  >
+                    {batchDeleting ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                    Delete
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="min-w-[680px]">
-            <div className="grid grid-cols-[minmax(300px,1fr)_120px_190px_48px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+            <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+              <SelectionCheckbox
+                checked={selection.allVisibleSelected}
+                indeterminate={selectedEntries.length > 0 && !selection.allVisibleSelected}
+                disabled={visibleEntries.length === 0 || loading}
+                label="Select all visible items"
+                onToggle={selection.toggleAllVisible}
+              />
               <span>Name</span>
               <span>Size</span>
               <span>Modified</span>
-              <span />
             </div>
             {loading && visibleEntries.length === 0 ? (
               <div className="grid h-64 place-items-center text-slate-400">
@@ -286,7 +388,8 @@ export function Explorer({
                 <FileRow
                   key={entry.path}
                   entry={entry}
-                  storage={storage}
+                  selected={selection.selectedKeys.has(entry.path)}
+                  onToggleSelection={(range) => selection.toggle(entry.path, range)}
                   onOpen={() => {
                     if (entry.kind === 'directory') {
                       navigateTo(ensureDirectory(entry.path))
@@ -294,7 +397,6 @@ export function Explorer({
                       window.location.assign(api.downloadUrl(storage.id, entry.path))
                     }
                   }}
-                  onDelete={() => void remove(entry)}
                 />
               ))
             )}
@@ -341,18 +443,28 @@ export function Explorer({
 
 function FileRow({
   entry,
-  storage,
+  selected,
+  onToggleSelection,
   onOpen,
-  onDelete,
 }: {
   entry: FileEntry
-  storage: Storage
+  selected: boolean
+  onToggleSelection: (range: boolean) => void
   onOpen: () => void
-  onDelete: () => void
 }) {
   const Icon = fileIcon(entry)
   return (
-    <div className="group grid grid-cols-[minmax(300px,1fr)_120px_190px_48px] items-center border-b border-slate-100 px-5 py-2.5 last:border-0 hover:bg-slate-50/80">
+    <div
+      className={cn(
+        'group grid grid-cols-[44px_minmax(300px,1fr)_120px_190px] items-center border-b border-slate-100 px-5 py-2.5 last:border-0',
+        selected ? 'bg-slate-100/90' : 'hover:bg-slate-50/80',
+      )}
+    >
+      <SelectionCheckbox
+        checked={selected}
+        label={`Select ${entry.name}`}
+        onToggle={onToggleSelection}
+      />
       <button className="flex min-w-0 items-center gap-3 text-left" onClick={onOpen}>
         <span
           className={cn(
@@ -370,30 +482,6 @@ function FileRow({
         {entry.kind === 'directory' ? '—' : formatBytes(entry.size)}
       </span>
       <span className="text-xs text-slate-500">{formatDate(entry.modified_at)}</span>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="size-8 opacity-0 group-hover:opacity-100">
-            <MoreHorizontal className="size-4" />
-            <span className="sr-only">Open actions for {entry.name}</span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          {entry.kind === 'file' && (
-            <DropdownMenuItem
-              onSelect={() => window.location.assign(api.downloadUrl(storage.id, entry.path))}
-            >
-              <ArrowDownToLine className="size-4" />
-              Download
-            </DropdownMenuItem>
-          )}
-          {storage.can_write && (
-            <DropdownMenuItem danger onSelect={onDelete}>
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   )
 }
