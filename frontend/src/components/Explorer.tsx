@@ -18,6 +18,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
@@ -310,8 +311,8 @@ export function Explorer({
 
       <main className="min-h-0 flex-1 overflow-auto overscroll-contain bg-[#f7f8f9] p-5 sm:p-8">
         <section className="mx-auto max-w-[1500px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.025)]">
-          <div className="flex min-h-[69px] items-center justify-between gap-4 border-b border-slate-100 px-5 py-4">
-            <div>
+          <div className="flex min-h-[69px] flex-col items-stretch gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div className="min-w-0">
               <h1 className="text-sm font-semibold text-slate-950">
                 {query.trim().length >= 2 ? `Results for “${query.trim()}”` : 'Files'}
               </h1>
@@ -320,16 +321,17 @@ export function Explorer({
               </p>
             </div>
             {selectedEntries.length > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="mr-1 text-xs font-medium text-slate-500">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+                <span className="mr-1 whitespace-nowrap text-xs font-medium text-slate-500">
                   {selectedEntries.length} selected
                 </span>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={selection.clear}
                   disabled={batchDeleting || archivePreparing}
                 >
+                  <X className="size-3.5" />
                   Clear
                 </Button>
                 <Button
