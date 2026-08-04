@@ -99,8 +99,8 @@ jobs:
       - name: Build frontend
         run: npm --prefix frontend run build
 
-  publish-image:
-    name: Publish image
+  publish-edge-image:
+    name: Publish edge image
     if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=edge
             type=raw,value=sha-${{ github.sha }}
 
       - name: Build and push image

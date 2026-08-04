@@ -164,3 +164,13 @@ npm --prefix frontend run build
 ## Current limitations
 
 Recursive search is intended for small and medium-sized directory trees. Each request scans at most 50,000 entries and returns at most 500 results. Very large object stores will benefit from a dedicated indexer in a future release.
+
+## Release channels
+
+Lume publishes multi-platform container images for `linux/amd64` and `linux/arm64`:
+
+- `latest` and semantic version tags such as `0.1.0` track stable releases.
+- `edge` tracks the latest successful build from `main` and may contain unreleased changes.
+- `sha-<commit>` identifies an immutable source revision.
+
+Release versions and notes are prepared automatically from Conventional Commits. Merging the generated release pull request creates the version tag, publishes the container image, and publishes the GitHub Release.
