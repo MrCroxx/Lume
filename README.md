@@ -1,81 +1,166 @@
-# Lume
+<div align="center">
+  <img src="frontend/public/brand/lume-wordmark.png" alt="Lume" width="420">
 
-Lume is a multi-storage file browser built with Rust and React. Its backend uses Apache OpenDAL to provide a unified interface for local files, WebDAV, FTP, SFTP, S3, and mounted Samba/CIFS shares. The frontend is built with React, TypeScript, Tailwind CSS, and shadcn/ui-style Radix components.
+  <p><strong>A clean, self-hosted workspace for all your files.</strong></p>
+  <p>Bring local disks, NAS shares, and remote storage into one browser-based interface.</p>
+</div>
+
+Lume is a lightweight file browser built with Rust and React. It is designed for homelabs, home servers, and small self-hosted environments where storage is spread across several systems but should feel like one workspace.
 
 ## Features
 
-- Browse multiple storage backends, search recursively, upload and download files, create directories, and delete directory trees.
-- Use the `All connections` aggregate view to browse every connection root and search across connections.
-- Keep browser paths in deep-linkable URLs, with native browser history and ACL-aware parent navigation.
-- Manage multiple SQLite-backed users with Argon2id password hashing, opaque random sessions, and `admin` or `member` roles.
-- Let users change their own username and password, while administrators can edit or reset any account.
-- Grant `read`, `write`, and `manage` permissions by storage connection and path prefix. Administrators have implicit global access.
-- Bind trusted-access rules to individual users, matching source IP/CIDR ranges and domains validated through trusted reverse proxies.
-- Manage users, path permissions, trusted-access rules, OpenDAL storage connections, and runtime settings dynamically from the Web UI, with state persisted in SQLite.
-- Connect natively to local filesystems, WebDAV, FTP, SFTP, and S3 through OpenDAL. Access Samba/CIFS shares through an operating-system mount and OpenDAL's `fs` service.
-- Stream large downloads and bound recursive searches to 50,000 scanned entries and 500 returned results per request.
+- Browse all configured storage connections from one interface.
+- Connect local filesystems, mounted Samba/CIFS shares, WebDAV, FTP, SFTP, and S3-compatible storage through [Apache OpenDAL](https://opendal.apache.org/).
+- Search, upload, download, create directories, and remove directory trees.
+- Manage users with administrator and member roles.
+- Grant read, write, and management access by connection and path prefix.
+- Configure users, permissions, storage connections, trusted networks, and runtime settings without restarting Lume.
+- Protect credentials at rest with XChaCha20-Poly1305 encryption.
 
-## Getting started
+### One view for every connection
 
-Lume requires Rust 1.95 or later and Node.js 24 or later. On the first launch, provide a non-empty administrator password through an environment variable. The password is used only to initialize the administrator account and is not written to the configuration file.
+See every configured storage backend at a glance and move between them without switching tools.
+
+![Lume connection overview](docs/images/connections.png)
+
+### A focused file browser
+
+Navigate, search, upload, and organize files through the same interface, regardless of the underlying storage service.
+
+![Browsing files in Lume](docs/images/file-browser.png)
+
+### Administration built in
+
+Manage accounts, path-level permissions, storage connections, and trusted-access rules from the Web UI.
+
+![Lume administration](docs/images/administration.png)
+
+## Deploy with Docker
+
+Lume publishes a container image to GitHub Container Registry. The first startup requires a non-empty administrator password. The password initializes the administrator account and is not written to the configuration file.
+
+```bash
+docker volume create lume-data
+
+docker run -d \
+  --name lume \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e LUME_ADMIN_PASSWORD='replace-with-a-strong-password' \
+  -v lume-data:/app/data \
+  ghcr.io/mrcroxx/lume:latest
+```
+
+Open `http://localhost:8080` and sign in as `admin` with the password supplied above.
+
+To build the image locally instead:
+
+```bash
+docker build --tag lume:local .
+```
+
+Then replace `ghcr.io/mrcroxx/lume:latest` in the `docker run` command with `lume:local`.
+
+## Deploy with Docker Compose
+
+Create `compose.yaml`:
+
+```yaml
+services:
+  lume:
+    image: ghcr.io/mrcroxx/lume:latest
+    container_name: lume
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      LUME_ADMIN_PASSWORD: "${LUME_ADMIN_PASSWORD:?set LUME_ADMIN_PASSWORD}"
+    volumes:
+      - lume-data:/app/data
+
+volumes:
+  lume-data:
+```
+
+Start Lume with:
+
+```bash
+export LUME_ADMIN_PASSWORD='replace-with-a-strong-password'
+docker compose up -d
+```
+
+The `/app/data` volume contains both the SQLite database and Lume's default encryption key. Back up and restore them together. Do not recreate the container without persisting this directory.
+
+### Expose host storage
+
+To browse a directory from the Docker host, add a bind mount to the container:
+
+```yaml
+services:
+  lume:
+    volumes:
+      - lume-data:/app/data
+      - /srv/files:/storage/files
+```
+
+Then add a `Local filesystem` connection in the Administration page with `/storage/files` as its root. The directory must be accessible to UID and GID `10001`, which the container uses by default.
+
+For Samba/CIFS, mount the share on the Docker host first and pass the mounted directory into the container. Lume deliberately avoids privileged in-container mounts and does not require `CAP_SYS_ADMIN`.
+
+## Configuration and security
+
+Most configuration lives in SQLite and can be changed dynamically from the Administration page:
+
+- Users, roles, and path permissions.
+- OpenDAL storage connections and their enabled state.
+- Session lifetime, Secure Cookie behavior, upload limits, and trusted reverse proxies.
+- Per-user trusted-access rules for selected CIDR ranges and domains.
+
+Bootstrap settings can be supplied through environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LUME_ADDRESS` | `0.0.0.0:8080` | HTTP listen address |
+| `LUME_DATABASE_URL` | `sqlite:///app/data/lume.db` in Docker | SQLite database URL |
+| `LUME_FRONTEND_DIST` | `/app/frontend/dist` in Docker | Built frontend directory |
+| `LUME_ADMIN_USERNAME` | `admin` | Initial administrator username |
+| `LUME_ADMIN_PASSWORD` | None | Initial administrator password |
+| `LUME_SECRET_KEY` | None | Base64-encoded storage encryption key |
+| `LUME_SECRET_KEY_FILE` | `/app/data/lume.key` in Docker | Storage encryption key file |
+
+Storage connection definitions are encrypted in full before they are stored in SQLite. For production deployments, you can manage the master key externally through `LUME_SECRET_KEY` or `LUME_SECRET_KEY_FILE`.
+
+Trusted-access rules bypass password verification only. Normal roles and path permissions still apply. Forwarded client addresses and hostnames are accepted only from reverse proxies explicitly trusted in Lume; those proxies must overwrite client-supplied `Host` and `X-Forwarded-For` headers.
+
+## Development
+
+Lume requires Rust 1.95 or later and Node.js 24 or later.
 
 ```bash
 npm --prefix frontend install
 npm --prefix frontend run build
-LUME_ADMIN_PASSWORD='replace-this-password' cargo run -p lume-server
+LUME_ADMIN_PASSWORD='replace-with-a-strong-password' cargo run -p lume-server
 ```
 
-Open `http://127.0.0.1:8080` and sign in as `admin` with the password supplied above. Users, permissions, storage connections, and runtime settings are managed from the Administration page.
-
-`config.toml` is an optional bootstrap configuration file. It contains only values that must be known before the application starts: the listen address, frontend distribution directory, SQLite URL, and initial administrator settings. Without this file, Lume defaults to `0.0.0.0:8080`, `frontend/dist`, and `sqlite://data/lume.db`. The `LUME_ADDRESS`, `LUME_FRONTEND_DIST`, `LUME_DATABASE_URL`, and `LUME_ADMIN_USERNAME` environment variables override these values.
-
-The following settings are stored in SQLite and can be updated dynamically from the Web UI:
-
-- Session lifetime, Secure Cookie behavior, upload size limits, and trusted reverse-proxy CIDRs.
-- Per-user trusted-access rules.
-- OpenDAL storage connections and their enabled state.
-- Users, roles, and path permissions.
-
-Storage credentials are never stored as plaintext in SQLite. Lume encrypts each complete connection definition with XChaCha20-Poly1305. By default, the master key is stored in `data/lume.key` with `0600` permissions. Production deployments can inject and manage the master key through `LUME_SECRET_KEY` or `LUME_SECRET_KEY_FILE`. Back up the database and master key together.
-
-For frontend development, run the backend and development server concurrently:
+For frontend development, run the Vite server alongside the backend:
 
 ```bash
-LUME_ADMIN_PASSWORD='replace-this-password' cargo run -p lume-server
+LUME_ADMIN_PASSWORD='replace-with-a-strong-password' cargo run -p lume-server
 npm --prefix frontend run dev
 ```
 
 Vite proxies `/api` requests to `127.0.0.1:8080`.
 
-## Samba/CIFS
-
-OpenDAL does not currently provide a native SMB service. Lume does not perform privileged mounts inside the application process. Instead, mount the share through the operating system or container orchestration layer, then create a `kind = "smb"` connection that points to the mounted directory. This keeps all file operations behind OpenDAL without granting `CAP_SYS_ADMIN` to the web service.
-
-Example for Linux:
-
-```bash
-sudo mount -t cifs //nas.example.com/team /mnt/team-share \
-  -o credentials=/etc/lume/smb-credentials,uid=lume,gid=lume,vers=3.1.1
-```
-
-After mounting the share, open Administration → Storage connections, add a `Samba mount`, and set its mounted directory to `/mnt/team-share`.
-
-## Trusted-access security model
-
-CIDR rules use the TCP peer address by default. Lume reads `X-Forwarded-For` only when the peer matches a trusted reverse-proxy CIDR configured in the Web UI. Domain rules can match `Host` only under the same condition. The reverse proxy must overwrite client-supplied `Host` and `X-Forwarded-For` headers instead of forwarding them unchanged.
-
-Each trusted-access rule is bound to a user through a stable `user_id`. Non-empty CIDR and domain matchers within one rule use AND semantics; multiple rules for the same user use OR semantics. Trusted access replaces only password verification. Every subsequent authorization decision still uses the user's role and path ACL.
-
-After the username changes on the sign-in page, Lume checks whether the current network matches that user's rules. A match hides the password field and creates a `bypass` session; otherwise, a password remains mandatory. The backend reevaluates the current network and database rules whenever a bypass session is used. Leaving the trusted network, disabling a rule, or disabling the user invalidates the session immediately.
-
-## Validation
+Recommended validation commands:
 
 ```bash
 cargo fmt --all -- --check
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-## Current limitations and roadmap
+## Current limitations
 
-The current real-time recursive search is designed for small and medium-sized directory trees and provides consistent behavior across OpenDAL backends. For object stores with millions of entries, a future release should add a dedicated indexer and full-text search tables, updated incrementally through OpenDAL scans. The API already separates search from directory browsing, so this change would not require a new frontend contract.
+Recursive search is intended for small and medium-sized directory trees. Each request scans at most 50,000 entries and returns at most 500 results. Very large object stores will benefit from a dedicated indexer in a future release.
