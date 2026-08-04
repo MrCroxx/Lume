@@ -29,22 +29,39 @@ jobs:
   release_please:
     name: Prepare release
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.tag == '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
+    env:
+      RELEASE_APP_CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       sha: ${{ steps.release.outputs.sha }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      - name: Create release app token
+        id: release-app-token
+        if: env.RELEASE_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ env.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
       - name: Create or update release pull request
         id: release
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.release-app-token.outputs.token || github.token }}
 
   release_context:
     name: Resolve release context
@@ -111,6 +128,23 @@ jobs:
         with:
           ref: ${{ needs.release_context.outputs.ref }}
 
+      - name: Validate release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release_context.outputs.tag_name }}
+          RELEASE_VERSION: ${{ needs.release_context.outputs.version }}
+        run: |
+          python3 scripts/check_version_sync.py
+          repository_version=$(tr -d '\r\n' < VERSION)
+          if [[ "$RELEASE_VERSION" != "$repository_version" ]]; then
+            echo "Release version $RELEASE_VERSION does not match VERSION $repository_version" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "v$repository_version" ]]; then
+            echo "Release tag $RELEASE_TAG does not match v$repository_version" >&2
+            exit 1
+          fi
+
       - name: Prepare image metadata inputs
         id: image
         shell: bash
@@ -153,7 +187,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:sha-${{ steps.image.outputs.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=lume-image
           cache-to: type=gha,mode=max,scope=lume-image
@@ -164,6 +198,25 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      - name: Promote release image tags
+        shell: bash
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          tag_args=()
+          while IFS= read -r tag; do
+            if [[ -n "$tag" ]]; then
+              tag_args+=(--tag "$tag")
+            fi
+          done <<< "$IMAGE_TAGS"
+          if [[ ${#tag_args[@]} -eq 0 ]]; then
+            echo "No release image tags were generated" >&2
+            exit 1
+          fi
+          docker buildx imagetools create "${tag_args[@]}" "$IMAGE@$IMAGE_DIGEST"
 
       - name: Publish GitHub release
         env:
