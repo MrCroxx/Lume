@@ -3,6 +3,7 @@ import type {
   ArchiveTicket,
   BatchDeleteResult,
   FileEntry,
+  LoginHint,
   LoginOptions,
   Permission,
   RuntimeSettings,
@@ -61,6 +62,7 @@ function withQuery(path: string, values: Record<string, string | number | boolea
 
 export const api = {
   session: () => requestJson<Session>('/api/auth/session'),
+  loginHint: () => requestJson<LoginHint>('/api/auth/login-hint'),
   loginOptions: (username: string) =>
     requestJson<LoginOptions>('/api/auth/login-options', {
       method: 'POST',

@@ -15,6 +15,10 @@ export interface LoginOptions {
   password_required: boolean
 }
 
+export interface LoginHint {
+  username: string | null
+}
+
 export interface Storage {
   id: string
   name: string

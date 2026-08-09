@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, CheckCircle2, LockKeyhole } from 'lucide-react'
 import { api } from '../lib/api'
 import type { Session } from '../types'
@@ -13,6 +13,22 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
   const [loading, setLoading] = useState(false)
   const [checkingOptions, setCheckingOptions] = useState(false)
   const [passwordRequired, setPasswordRequired] = useState(true)
+  const usernameEdited = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void api
+      .loginHint()
+      .then((hint) => {
+        if (!cancelled && !usernameEdited.current && hint.username) {
+          setUsername(hint.username)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const candidate = username.trim()
@@ -103,6 +119,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
                 autoFocus
                 value={username}
                 onChange={(event) => {
+                  usernameEdited.current = true
                   setPasswordRequired(true)
                   setUsername(event.target.value)
                 }}

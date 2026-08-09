@@ -13,7 +13,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use rand_core::OsRng;
 use sha2::{Digest, Sha256};
-use sqlx::FromRow;
+use sqlx::{FromRow, SqliteConnection, SqlitePool};
 
 use crate::{
     error::{AppError, AppResult},
@@ -23,6 +23,11 @@ use crate::{
 };
 
 pub const SESSION_COOKIE: &str = "lume_session";
+
+pub struct CreatedSession {
+    pub token: String,
+    pub max_age_seconds: i64,
+}
 
 #[derive(Debug, Clone)]
 pub struct AuthContext {
@@ -111,11 +116,17 @@ pub async fn create_session(
     state: &AppState,
     user_id: &str,
     method: AuthMethod,
-) -> AppResult<String> {
+    client_ip: IpAddr,
+) -> AppResult<CreatedSession> {
     let raw = rand::random::<[u8; 32]>();
     let token = URL_SAFE_NO_PAD.encode(raw);
     let token_hash = session_hash(&token);
-    let expires_at = Utc::now() + Duration::hours(state.settings.load().session_hours);
+    let duration =
+        session_duration(state.settings.load().session_hours).map_err(AppError::Internal)?;
+    let expires_at = Utc::now()
+        .checked_add_signed(duration)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("session duration is too large")))?;
+    let mut transaction = state.pool.begin().await?;
     sqlx::query(
         "INSERT INTO sessions (token_hash, user_id, expires_at, auth_method) VALUES (?, ?, ?, ?)",
     )
@@ -123,9 +134,60 @@ pub async fn create_session(
     .bind(user_id)
     .bind(expires_at)
     .bind(method.as_str())
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await?;
-    Ok(token)
+    remember_successful_login(&mut transaction, client_ip, user_id).await?;
+    transaction.commit().await?;
+    Ok(CreatedSession {
+        token,
+        max_age_seconds: duration.num_seconds(),
+    })
+}
+
+pub async fn last_successful_login_username(
+    pool: &SqlitePool,
+    client_ip: IpAddr,
+) -> AppResult<Option<String>> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT u.username
+           FROM last_successful_logins l
+           JOIN users u ON u.id = l.user_id
+           WHERE l.client_ip = ? AND u.is_active = 1"#,
+    )
+    .bind(client_ip.to_string())
+    .fetch_optional(pool)
+    .await?)
+}
+
+async fn remember_successful_login(
+    connection: &mut SqliteConnection,
+    client_ip: IpAddr,
+    user_id: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO last_successful_logins (client_ip, user_id)
+           VALUES (?, ?)
+           ON CONFLICT(client_ip) DO UPDATE SET
+               user_id = excluded.user_id,
+               logged_in_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
+    )
+    .bind(client_ip.to_string())
+    .bind(user_id)
+    .execute(connection)
+    .await?;
+    Ok(())
+}
+
+pub fn session_duration(session_hours: i64) -> anyhow::Result<Duration> {
+    if session_hours <= 0 {
+        anyhow::bail!("session duration must be greater than zero");
+    }
+    let duration = Duration::try_hours(session_hours)
+        .ok_or_else(|| anyhow::anyhow!("session duration is too large"))?;
+    Utc::now()
+        .checked_add_signed(duration)
+        .ok_or_else(|| anyhow::anyhow!("session duration is too large"))?;
+    Ok(duration)
 }
 
 pub async fn delete_session(state: &AppState, token: &str) -> AppResult<()> {
@@ -342,7 +404,7 @@ pub async fn matching_trusted_access_rule_for_request(
     Ok(None)
 }
 
-fn trusted_client_ip(
+pub fn trusted_client_ip(
     trusted_proxies: &[ipnet::IpNet],
     peer_ip: IpAddr,
     headers: &HeaderMap,
@@ -395,6 +457,7 @@ fn host_without_port(host: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
     fn domain_patterns_do_not_match_apex() {
@@ -425,6 +488,100 @@ mod tests {
             "10.1.2.3".parse().unwrap(),
             Some("public.example.com")
         ));
+    }
+
+    #[test]
+    fn forwarded_client_ip_is_used_only_for_trusted_proxies() {
+        let peer_ip: IpAddr = "10.0.0.2".parse().unwrap();
+        let forwarded_ip: IpAddr = "203.0.113.7".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.7, 10.0.0.2".parse().unwrap());
+
+        assert_eq!(trusted_client_ip(&[], peer_ip, &headers), peer_ip);
+        assert_eq!(
+            trusted_client_ip(&["10.0.0.0/8".parse().unwrap()], peer_ip, &headers),
+            forwarded_ip
+        );
+    }
+
+    #[test]
+    fn session_duration_rejects_invalid_values() {
+        assert_eq!(session_duration(24 * 7).unwrap().num_hours(), 24 * 7);
+        assert!(session_duration(0).is_err());
+        assert!(session_duration(i64::MAX).is_err());
+    }
+
+    #[tokio::test]
+    async fn login_hint_tracks_the_latest_active_user_for_an_ip() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                is_active INTEGER NOT NULL
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"CREATE TABLE last_successful_logins (
+                client_ip TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                logged_in_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO users (id, username, is_active) VALUES ('alice', 'alice', 1), ('bob', 'bob', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let client_ip = "203.0.113.7".parse().unwrap();
+        let mut connection = pool.acquire().await.unwrap();
+        remember_successful_login(&mut connection, client_ip, "alice")
+            .await
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            last_successful_login_username(&pool, client_ip)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("alice")
+        );
+
+        let mut connection = pool.acquire().await.unwrap();
+        remember_successful_login(&mut connection, client_ip, "bob")
+            .await
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            last_successful_login_username(&pool, client_ip)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("bob")
+        );
+
+        sqlx::query("UPDATE users SET is_active = 0 WHERE id = 'bob'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            last_successful_login_username(&pool, client_ip)
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
