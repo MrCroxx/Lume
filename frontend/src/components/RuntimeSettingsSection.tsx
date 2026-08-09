@@ -58,7 +58,10 @@ export function RuntimeSettingsSection() {
       </div>
       {settings && (
         <form className="grid gap-5 p-5 md:grid-cols-2" onSubmit={submit}>
-          <Field label="Session duration (hours)">
+          <Field
+            label="Session duration (hours)"
+            description="Applies to new sign-ins and persists across browser restarts."
+          >
             <Input
               type="number"
               min={1}
@@ -121,11 +124,22 @@ function splitValues(value: string) {
     .filter(Boolean)
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  description,
+  children,
+}: {
+  label: string
+  description?: string
+  children: React.ReactNode
+}) {
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
       {children}
+      {description && (
+        <span className="mt-1.5 block text-xs leading-5 text-slate-400">{description}</span>
+      )}
     </label>
   )
 }

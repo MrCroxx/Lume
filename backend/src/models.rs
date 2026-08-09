@@ -144,6 +144,11 @@ pub struct LoginOptionsView {
 }
 
 #[derive(Debug, Serialize)]
+pub struct LoginHintView {
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SessionView {
     pub user: UserView,
     pub auth_method: String,

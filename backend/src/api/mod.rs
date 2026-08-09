@@ -21,15 +21,15 @@ use uuid::Uuid;
 use crate::{
     auth::{
         AuthContext, AuthMethod, SESSION_COOKIE, create_session, delete_session, hash_password,
-        matching_trusted_access_rule_for_request, normalize_domain, permissions_allow,
-        permissions_allow_traversal, require_access, revoke_other_sessions, user_permissions,
-        verify_password,
+        last_successful_login_username, matching_trusted_access_rule_for_request, normalize_domain,
+        permissions_allow, permissions_allow_traversal, require_access, revoke_other_sessions,
+        session_duration, trusted_client_ip, user_permissions, verify_password,
     },
     config::StorageConfig,
     error::{AppError, AppResult},
     models::{
         Access, BatchDeleteFailure, BatchDeleteRequest, BatchDeleteResult, CreateDirectoryRequest,
-        CreateUserRequest, FileEntry, GrantPermissionRequest, LoginOptionsRequest,
+        CreateUserRequest, FileEntry, GrantPermissionRequest, LoginHintView, LoginOptionsRequest,
         LoginOptionsView, LoginRequest, MoveRequest, PermissionRecord, RuntimeSettingsView,
         SaveStorageConnectionRequest, SaveTrustedAccessRuleRequest, SessionView,
         StorageConnectionRecord, StorageConnectionView, StorageView, TrustedAccessRuleRecord,
@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(crate::archive::router())
         .route("/api/health", get(health))
+        .route("/api/auth/login-hint", get(login_hint))
         .route("/api/auth/login-options", post(login_options))
         .route("/api/auth/login", post(login))
         .route("/api/auth/session", get(current_session).delete(logout))
@@ -100,6 +101,21 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
+}
+
+async fn login_hint(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    let settings = state.settings.load();
+    let client_ip = trusted_client_ip(&settings.trusted_proxies, peer.ip(), &headers);
+    drop(settings);
+    let username = last_successful_login_username(&state.pool, client_ip).await?;
+    Ok((
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Json(LoginHintView { username }),
+    ))
 }
 
 async fn login_options(
@@ -160,13 +176,17 @@ async fn login(
         AuthMethod::Session
     };
 
-    let token = create_session(&state, &user.id, method).await?;
+    let settings = state.settings.load();
+    let client_ip = trusted_client_ip(&settings.trusted_proxies, peer.ip(), &headers);
+    drop(settings);
+    let session = create_session(&state, &user.id, method, client_ip).await?;
     let secure_cookies = state.settings.load().secure_cookies;
-    let cookie = Cookie::build((SESSION_COOKIE, token))
+    let cookie = Cookie::build((SESSION_COOKIE, session.token))
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
         .secure(secure_cookies)
+        .max_age(time::Duration::seconds(session.max_age_seconds))
         .build();
     Ok((
         jar.add(cookie),
@@ -824,11 +844,7 @@ async fn update_runtime_settings(
     Json(request): Json<UpdateRuntimeSettingsRequest>,
 ) -> AppResult<Json<RuntimeSettingsView>> {
     require_admin(&auth)?;
-    if request.session_hours <= 0 {
-        return Err(AppError::BadRequest(
-            "session duration must be greater than zero".into(),
-        ));
-    }
+    session_duration(request.session_hours).map_err(bad_request)?;
     if request.max_upload_bytes == 0 {
         return Err(AppError::BadRequest(
             "maximum upload size must be greater than zero".into(),

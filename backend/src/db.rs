@@ -148,6 +148,11 @@ const SCHEMA: &[&str] = &[
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )"#,
+    r#"CREATE TABLE IF NOT EXISTS last_successful_logins (
+        client_ip TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        logged_in_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )"#,
     r#"CREATE TABLE IF NOT EXISTS permissions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -188,5 +193,6 @@ const SCHEMA: &[&str] = &[
     )"#,
     "CREATE INDEX IF NOT EXISTS idx_permissions_user_storage ON permissions(user_id, storage_id)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_last_successful_logins_user ON last_successful_logins(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_trusted_access_user ON trusted_access_rules(user_id, enabled)",
 ];
