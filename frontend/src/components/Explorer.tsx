@@ -14,6 +14,7 @@ import {
   FolderPlus,
   FolderOpen,
   LoaderCircle,
+  Info,
   RefreshCw,
   Search,
   Trash2,
@@ -29,6 +30,7 @@ import type { FileEntry, Storage } from '../types'
 import { Button } from './ui/button'
 import { Dialog } from './ui/dialog'
 import { Input } from './ui/input'
+import { FileInfoDialog } from './FileInfoDialog'
 import { SelectionCheckbox } from './SelectionCheckbox'
 
 export function Explorer({
@@ -57,6 +59,7 @@ export function Explorer({
   const [query, setQuery] = useState('')
   const [listLoading, setListLoading] = useState(true)
   const [searchLoading, setSearchLoading] = useState(false)
+  const [infoEntry, setInfoEntry] = useState<FileEntry | null>(null)
   const [folderOpen, setFolderOpen] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [batchDeleting, setBatchDeleting] = useState(false)
@@ -409,8 +412,8 @@ export function Explorer({
           </div>
 
           <div className="overflow-x-auto overscroll-x-contain">
-            <div className="min-w-[680px]">
-              <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+            <div className="min-w-[740px]">
+              <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px_44px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
                 <SelectionCheckbox
                   checked={selection.allVisibleSelected}
                   indeterminate={selectedEntries.length > 0 && !selection.allVisibleSelected}
@@ -421,6 +424,7 @@ export function Explorer({
                 <span>Name</span>
                 <span>Size</span>
                 <span>Modified</span>
+                <span className="sr-only">Info</span>
               </div>
               {loading && visibleEntries.length === 0 ? (
                 <div className="grid h-64 place-items-center text-slate-400">
@@ -434,12 +438,15 @@ export function Explorer({
                     key={entry.path}
                     entry={entry}
                     selected={selection.selectedKeys.has(entry.path)}
+                    onInfo={() => setInfoEntry(entry)}
                     onToggleSelection={(range) => selection.toggle(entry.path, range)}
                     onOpen={() => {
                       if (entry.kind === 'directory') {
                         navigateTo(ensureDirectory(entry.path))
                       } else {
-                        window.location.assign(api.downloadUrl(storage.id, entry.path))
+                        void api.downloadFile(storage.id, entry).catch((reason: unknown) => {
+                          toast.error(reason instanceof Error ? reason.message : 'Unable to download file')
+                        })
                       }
                     }}
                   />
@@ -449,6 +456,8 @@ export function Explorer({
           </div>
         </section>
       </main>
+
+      {infoEntry && <FileInfoDialog key={infoEntry.path} storageId={storage.id} entry={infoEntry} onClose={() => setInfoEntry(null)} />}
 
       <Dialog
         open={folderOpen}
@@ -492,17 +501,19 @@ function FileRow({
   selected,
   onToggleSelection,
   onOpen,
+  onInfo,
 }: {
   entry: FileEntry
   selected: boolean
   onToggleSelection: (range: boolean) => void
   onOpen: () => void
+  onInfo: () => void
 }) {
   const Icon = fileIcon(entry)
   return (
     <div
       className={cn(
-        'group grid grid-cols-[44px_minmax(300px,1fr)_120px_190px] items-center border-b border-slate-100 px-5 py-2.5 last:border-0',
+        'group grid grid-cols-[44px_minmax(300px,1fr)_120px_190px_44px] items-center border-b border-slate-100 px-5 py-2.5 last:border-0',
         selected ? 'bg-slate-100/90' : 'hover:bg-slate-50/80',
       )}
     >
@@ -528,6 +539,9 @@ function FileRow({
         {entry.kind === 'directory' ? '—' : formatBytes(entry.size)}
       </span>
       <span className="text-xs text-slate-500">{formatDate(entry.modified_at)}</span>
+      <Button variant="ghost" size="icon" aria-label={`Info for ${entry.name}`} title="File info" onClick={onInfo}>
+        <Info className="size-4" />
+      </Button>
     </div>
   )
 }

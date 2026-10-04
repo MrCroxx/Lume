@@ -27,7 +27,7 @@ RUN --mount=type=cache,id=lume-cargo-registry,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates \
+    && apt-get install --yes --no-install-recommends ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 lume \
     && useradd --uid 10001 --gid lume --home-dir /app --no-create-home --shell /usr/sbin/nologin lume

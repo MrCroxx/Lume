@@ -1,4 +1,5 @@
 pub(crate) mod extract;
+mod info;
 #[cfg(test)]
 mod integration_tests;
 mod upload;
@@ -69,6 +70,7 @@ pub fn router(state: AppState) -> Router {
             "/api/files/{storage_id}/batch-delete",
             post(batch_delete_files),
         )
+        .route("/api/files/{storage_id}/info", get(info::file_info))
         .route("/api/files/{storage_id}/download", get(download_file))
         .route("/api/files/{storage_id}/move", post(move_file))
         .route("/api/search/{storage_id}", get(search_files))

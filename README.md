@@ -12,6 +12,7 @@ Lume is a lightweight file browser built with Rust and React. It is designed for
 - Browse all configured storage connections from one interface.
 - Connect local filesystems, mounted Samba/CIFS shares, WebDAV, FTP, SFTP, and S3-compatible storage through [Apache OpenDAL](https://opendal.apache.org/).
 - Search, upload, download, create directories, and remove directory trees.
+- Inspect file metadata and media duration, frame rates, and video/audio/subtitle tracks.
 - Manage users with administrator and member roles.
 - Grant read, write, and management access by connection and path prefix.
 - Configure users, permissions, storage connections, trusted networks, and runtime settings without restarting Lume.
@@ -131,6 +132,12 @@ Bootstrap settings can be supplied through environment variables:
 Storage connection definitions are encrypted in full before they are stored in SQLite. For production deployments, you can manage the master key externally through `LUME_SECRET_KEY` or `LUME_SECRET_KEY_FILE`.
 
 Trusted-access rules bypass password verification only. Normal roles and path permissions still apply. Forwarded client addresses and hostnames are accepted only from reverse proxies explicitly trusted in Lume; those proxies must overwrite client-supplied `Host` and `X-Forwarded-For` headers.
+
+## Media inspection
+
+File rows include an Info button. Media details are read on demand using `ffprobe`, included in the Docker image. For native deployments, install FFmpeg and make `ffprobe` available on `PATH`. Basic file information remains available if media inspection fails.
+
+Inspection uses the same storage permissions as downloads and reads through OpenDAL, including remote connections. Each probe is limited to 30 seconds, 64 MiB of reads, and 1 MiB of metadata, with at most two concurrent probes. Common standalone media containers are supported; playlists and external media references are not followed. Frame rates are reported per video track; unavailable metadata is shown as unknown.
 
 ## Development
 

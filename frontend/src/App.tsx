@@ -9,7 +9,7 @@ import { Explorer } from './components/Explorer'
 import { LoginPage } from './components/LoginPage'
 import { MobileSidebar, Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
-import { api, ApiError } from './lib/api'
+import { api, ApiError, onAuthenticationRequired } from './lib/api'
 import {
   initializeBrowserHistory,
   normalizeDirectoryPath,
@@ -36,6 +36,14 @@ function App() {
     setHistoryPosition(writeAppRoute(nextRoute, replace))
     setRoute(nextRoute)
   }, [])
+
+  useEffect(() => onAuthenticationRequired(() => {
+    setSession(null)
+    setStorages([])
+    setStoragesLoaded(false)
+    setAccountSettingsOpen(false)
+    setMobileSidebarOpen(false)
+  }), [])
 
   useEffect(() => {
     void bootstrap()
