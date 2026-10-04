@@ -132,3 +132,31 @@ export interface SaveStorageConnection {
   secret_access_key?: string
   known_hosts_strategy?: string
 }
+
+export interface MediaStream {
+  index: number
+  codec_type?: string
+  codec_name?: string
+  profile?: string
+  width?: number
+  height?: number
+  pix_fmt?: string
+  avg_frame_rate?: string
+  r_frame_rate?: string
+  duration?: string
+  bit_rate?: string
+  sample_rate?: string
+  channels?: number
+  channel_layout?: string
+  tags?: { language?: string; title?: string }
+  disposition?: { default?: number; forced?: number }
+}
+
+export interface FileInfo extends FileEntry {
+  content_type: string
+  media: {
+    format?: { format_name?: string; duration?: string; bit_rate?: string }
+    streams?: MediaStream[]
+  } | null
+  media_error: string | null
+}

@@ -86,10 +86,15 @@ export function Sidebar({
             <ChevronRight className="absolute size-4 text-slate-300 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
           </button>
         ) : (
-          <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            aria-label="Go to home"
+            onClick={() => onNavigate({ page: 'files', storageId: null, path: '' })}
+            className="min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          >
             <Brand inverted size="sm" textClassName="text-lg text-white" />
             <p className="mt-1 text-[10px] text-slate-500">Unified file workspace</p>
-          </div>
+          </button>
         )}
 
         {onCollapseToggle && !collapsed && (

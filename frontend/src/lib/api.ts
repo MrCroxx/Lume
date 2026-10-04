@@ -3,6 +3,7 @@ import type {
   ArchiveTicket,
   BatchDeleteResult,
   FileEntry,
+  FileInfo,
   LoginHint,
   LoginOptions,
   Permission,
@@ -27,6 +28,12 @@ export class ApiError extends Error {
 }
 
 const BATCH_DELETE_SIZE = 500
+const authenticationListeners = new Set<() => void>()
+
+export function onAuthenticationRequired(listener: () => void) {
+  authenticationListeners.add(listener)
+  return () => { authenticationListeners.delete(listener) }
+}
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
@@ -39,6 +46,14 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
     headers,
   })
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/api/auth/login')) {
+      // Account updates can reject the current password while the session is valid.
+      if (path === '/api/account') {
+        await request('/api/auth/session').catch(() => {})
+      } else {
+        authenticationListeners.forEach((listener) => listener())
+      }
+    }
     throw new ApiError(await errorMessage(response), response.status)
   }
   return response
@@ -115,6 +130,8 @@ export const api = {
   storages: () => requestJson<Storage[]>('/api/storages'),
   files: (storageId: string, path: string) =>
     requestJson<FileEntry[]>(withQuery(`/api/files/${storageId}`, { path })),
+  fileInfo: (storageId: string, path: string, signal?: AbortSignal) =>
+    requestJson<FileInfo>(withQuery(`/api/files/${storageId}/info`, { path }), { signal }),
   search: (storageId: string, path: string, query: string) =>
     requestJson<FileEntry[]>(
       withQuery(`/api/search/${storageId}`, { path, q: query, limit: 200 }),
@@ -180,8 +197,17 @@ export const api = {
     link.click()
     link.remove()
   },
-  downloadUrl: (storageId: string, path: string) =>
-    withQuery(`/api/files/${storageId}/download`, { path }),
+  downloadFile: async (storageId: string, entry: FileEntry) => {
+    const url = withQuery(`/api/files/${storageId}/download`, { path: entry.path })
+    // Check authorization through the shared handler before starting a browser download.
+    await request(url, { method: 'HEAD' })
+    const link = document.createElement('a')
+    link.href = url
+    link.download = entry.name
+    document.body.append(link)
+    link.click()
+    link.remove()
+  },
   users: () => requestJson<User[]>('/api/admin/users'),
   createUser: (payload: { username: string; password: string; role: string }) =>
     requestJson<User>('/api/admin/users', {

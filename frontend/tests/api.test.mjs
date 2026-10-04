@@ -57,3 +57,64 @@ test('SPA fallback HTML cannot masquerade as a successful API response', async (
   await assert.rejects(api.storages(), (error) =>
     error instanceof ApiError && /expected JSON/i.test(error.message))
 })
+
+test('protected 401 responses notify authentication listeners, while 403 does not', async () => {
+  const { onAuthenticationRequired } = await import('../src/lib/api.ts')
+  let notifications = 0
+  const unsubscribe = onAuthenticationRequired(() => { notifications += 1 })
+  try {
+    globalThis.fetch = async () => new Response(null, { status: 403 })
+    await assert.rejects(api.storages())
+    assert.equal(notifications, 0)
+    globalThis.fetch = async () => new Response(null, { status: 401 })
+    await assert.rejects(api.storages())
+    assert.equal(notifications, 1)
+    await assert.rejects(api.login('user', 'wrong'))
+    assert.equal(notifications, 1)
+    unsubscribe()
+    await assert.rejects(api.storages())
+    assert.equal(notifications, 1)
+  } finally { unsubscribe() }
+})
+
+test('incorrect account password does not expire a valid session', async () => {
+  const { onAuthenticationRequired } = await import('../src/lib/api.ts')
+  let notifications = 0
+  const unsubscribe = onAuthenticationRequired(() => { notifications += 1 })
+  try {
+    globalThis.fetch = async (path) => path === '/api/account'
+      ? new Response(null, { status: 401 })
+      : Response.json({ user: { id: 'user' } })
+    await assert.rejects(api.updateAccount({ username: 'user', current_password: 'wrong' }))
+    assert.equal(notifications, 0)
+    globalThis.fetch = async () => new Response(null, { status: 401 })
+    await assert.rejects(api.updateAccount({ username: 'user', current_password: 'wrong' }))
+    assert.equal(notifications, 1)
+  } finally { unsubscribe() }
+})
+
+test('file info preserves special characters and supports cancellation', async () => {
+  const controller = new AbortController()
+  globalThis.fetch = async (path, init) => {
+    assert.equal(new URL(path, 'http://localhost').pathname, '/api/files/local/info')
+    assert.equal(new URL(path, 'http://localhost').searchParams.get('path'), 'movies/a & b #1.mkv')
+    assert.equal(init.signal, controller.signal)
+    return Response.json({ name: 'movie.mkv', media: { streams: [] } })
+  }
+  assert.equal((await api.fileInfo('local', 'movies/a & b #1.mkv', controller.signal)).name, 'movie.mkv')
+})
+
+test('expired downloads request authentication before creating a browser download', async () => {
+  const { onAuthenticationRequired } = await import('../src/lib/api.ts')
+  let notifications = 0
+  const unsubscribe = onAuthenticationRequired(() => { notifications += 1 })
+  try {
+    globalThis.fetch = async (path, init) => {
+      assert.equal(init.method, 'HEAD')
+      assert.equal(new URL(path, 'http://localhost').searchParams.get('path'), 'video.mp4')
+      return new Response(null, { status: 401 })
+    }
+    await assert.rejects(api.downloadFile('local', { path: 'video.mp4', name: 'video.mp4' }))
+    assert.equal(notifications, 1)
+  } finally { unsubscribe() }
+})

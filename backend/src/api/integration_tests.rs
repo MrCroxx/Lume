@@ -580,3 +580,200 @@ async fn archive_tickets_recheck_permissions_before_downloading() {
         .await;
     assert_json_error(response, StatusCode::FORBIDDEN).await;
 }
+
+#[tokio::test]
+async fn file_info_checks_access_and_reports_metadata() {
+    let mut app = TestApp::new(1024).await;
+    tokio::fs::write(app.root.path().join("note.txt"), b"hello")
+        .await
+        .unwrap();
+    let response = app
+        .send(
+            "GET",
+            "/api/files/local/info?path=note.txt",
+            Body::empty(),
+            &[],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let info: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(info["size"], 5);
+    assert_eq!(info["content_type"], "text/plain");
+    assert!(info["modified_at"].is_string());
+    assert!(info["media"].is_null());
+    assert!(info["media_error"].is_null());
+    assert_json_error(
+        app.send(
+            "GET",
+            "/api/files/local/info?path=../note.txt",
+            Body::empty(),
+            &[],
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_json_error(
+        app.send(
+            "GET",
+            "/api/files/local/info?path=missing.txt",
+            Body::empty(),
+            &[],
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    app.token = create_session(
+        &app.state,
+        "member",
+        AuthMethod::Session,
+        "127.0.0.1".parse().unwrap(),
+    )
+    .await
+    .unwrap()
+    .token;
+    assert_json_error(
+        app.send(
+            "GET",
+            "/api/files/local/info?path=note.txt",
+            Body::empty(),
+            &[],
+        )
+        .await,
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    app.token = "expired".into();
+    assert_json_error(
+        app.send(
+            "GET",
+            "/api/files/local/info?path=note.txt",
+            Body::empty(),
+            &[],
+        )
+        .await,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn failed_media_inspection_preserves_basic_info() {
+    let app = TestApp::new(1024).await;
+    tokio::fs::write(app.root.path().join("broken.mkv"), b"invalid video")
+        .await
+        .unwrap();
+    let response = app
+        .send(
+            "GET",
+            "/api/files/local/info?path=broken.mkv",
+            Body::empty(),
+            &[],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let info: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(info["size"], 13);
+    assert!(info["media"].is_null());
+    assert!(info["media_error"].is_string());
+}
+
+#[tokio::test]
+#[ignore = "requires ffmpeg and ffprobe on PATH"]
+async fn video_info_includes_fractional_frame_rate_and_all_track_types() {
+    let app = TestApp::new(1024).await;
+    let subtitles = app.root.path().join("captions.srt");
+    tokio::fs::write(
+        &subtitles,
+        "1\n00:00:00,000 --> 00:00:01,000\nTest caption\n",
+    )
+    .await
+    .unwrap();
+    // MP4 writes its metadata at the end by default, exercising HTTP seeking.
+    let output = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=64x64:rate=30000/1001",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000",
+        ])
+        .arg("-i")
+        .arg(&subtitles)
+        .args([
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2:s",
+            "-t",
+            "1",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            "-c:s",
+            "mov_text",
+            "-metadata:s:a:0",
+            "language=eng",
+        ])
+        .arg(app.root.path().join("sample.mp4"))
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response = app
+        .send(
+            "GET",
+            "/api/files/local/info?path=sample.mp4",
+            Body::empty(),
+            &[],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let info: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert!(info["media_error"].is_null(), "{info}");
+    assert!(
+        info["media"]["format"]["duration"]
+            .as_str()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+            >= 1.0
+    );
+    let streams = info["media"]["streams"].as_array().unwrap();
+    assert_eq!(streams.len(), 3);
+    let video = streams
+        .iter()
+        .find(|stream| stream["codec_type"] == "video")
+        .unwrap();
+    assert_eq!(video["avg_frame_rate"], "30000/1001");
+    assert_eq!(video["width"], 64);
+    let audio = streams
+        .iter()
+        .find(|stream| stream["codec_type"] == "audio")
+        .unwrap();
+    assert_eq!(audio["tags"]["language"], "eng");
+    assert!(
+        streams
+            .iter()
+            .any(|stream| stream["codec_type"] == "subtitle")
+    );
+}
