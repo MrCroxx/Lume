@@ -199,7 +199,7 @@ pub async fn delete_session(state: &AppState, token: &str) -> AppResult<()> {
 }
 
 pub async fn revoke_other_sessions(
-    state: &AppState,
+    connection: &mut SqliteConnection,
     user_id: &str,
     current_session_hash: Option<&str>,
 ) -> AppResult<()> {
@@ -207,12 +207,12 @@ pub async fn revoke_other_sessions(
         sqlx::query("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?")
             .bind(user_id)
             .bind(current_session_hash)
-            .execute(&state.pool)
+            .execute(&mut *connection)
             .await?;
     } else {
         sqlx::query("DELETE FROM sessions WHERE user_id = ?")
             .bind(user_id)
-            .execute(&state.pool)
+            .execute(&mut *connection)
             .await?;
     }
     Ok(())

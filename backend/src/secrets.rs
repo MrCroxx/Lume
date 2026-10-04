@@ -54,7 +54,7 @@ impl SecretCipher {
     }
 
     #[cfg(test)]
-    fn from_key(key: [u8; 32]) -> Self {
+    pub(crate) fn from_key(key: [u8; 32]) -> Self {
         Self {
             cipher: XChaCha20Poly1305::new((&key).into()),
         }

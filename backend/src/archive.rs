@@ -6,7 +6,7 @@ use std::{
 
 use async_zip::{Compression, ZipEntryBuilder, base::write::ZipFileWriter};
 use axum::{
-    Json, Router,
+    Router,
     body::Body,
     extract::{Path, State},
     http::{HeaderValue, header},
@@ -21,6 +21,7 @@ use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 use crate::{
+    api::extract::Json,
     auth::{AuthContext, permissions_allow, permissions_allow_traversal, user_permissions},
     error::{AppError, AppResult},
     models::{Access, PermissionRecord},
@@ -177,6 +178,31 @@ async fn download_archive(
         .archive_tickets
         .take(&ticket_id, &auth.user.id)
         .await?;
+    let storages = state.storages.load_full();
+    let mut permissions = HashMap::new();
+    for entry in &ticket.entries {
+        let storage_id = &entry.storage.id;
+        let current = storages
+            .get(storage_id)
+            .ok_or_else(|| AppError::NotFound("storage is no longer available".into()))?;
+        if !Arc::ptr_eq(current, &entry.storage) {
+            return Err(AppError::Conflict(
+                "storage configuration changed; prepare the archive again".into(),
+            ));
+        }
+        if !permissions.contains_key(storage_id) {
+            permissions.insert(
+                storage_id.clone(),
+                user_permissions(&state, &auth, storage_id).await?,
+            );
+        }
+        require_archive_access(
+            &auth,
+            &permissions[storage_id],
+            &entry.source_path,
+            entry.directory,
+        )?;
+    }
     let filename = ticket.filename.clone();
     let (writer, reader) = tokio::io::duplex(ZIP_BUFFER_SIZE);
 
@@ -194,7 +220,7 @@ async fn download_archive(
     );
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
-        archive_content_disposition(&filename)?,
+        attachment_content_disposition(&filename)?,
     );
     Ok(response)
 }
@@ -529,7 +555,7 @@ fn archive_filename(request: &CreateArchiveRequest) -> String {
     )
 }
 
-fn archive_content_disposition(filename: &str) -> AppResult<HeaderValue> {
+pub(crate) fn attachment_content_disposition(filename: &str) -> AppResult<HeaderValue> {
     let fallback = filename
         .chars()
         .map(|character| {
@@ -598,7 +624,7 @@ mod tests {
 
     #[test]
     fn archive_content_disposition_supports_unicode_filenames() {
-        let value = archive_content_disposition("照片.zip").unwrap();
+        let value = attachment_content_disposition("\u{7167}\u{7247}.zip").unwrap();
 
         assert_eq!(
             value.to_str().unwrap(),

@@ -228,7 +228,7 @@ fn absolute_path(path: &str) -> anyhow::Result<PathBuf> {
 }
 
 pub fn normalize_path(raw: &str, directory: bool) -> anyhow::Result<String> {
-    let raw = raw.trim().trim_start_matches('/');
+    let raw = raw.trim_start_matches('/');
     if raw.contains('\0') || raw.contains('\\') {
         bail!("path contains an invalid character");
     }
@@ -243,6 +243,11 @@ pub fn normalize_path(raw: &str, directory: bool) -> anyhow::Result<String> {
     let mut path = parts.join("/");
     if directory && !path.is_empty() {
         path.push('/');
+    }
+    // OpenDAL trims the whole path again. Reject aliases that could target a
+    // different file after authorization instead of silently changing the name.
+    if path.trim() != path {
+        bail!("leading or trailing whitespace in storage paths is not supported");
     }
     Ok(path)
 }
@@ -282,6 +287,20 @@ mod tests {
         assert!(path_is_within("team/docs/a.txt", "team/docs"));
         assert!(path_is_within("team/docs", "team/docs"));
         assert!(!path_is_within("team/docs-old/a.txt", "team/docs"));
+    }
+
+    #[test]
+    fn rejects_whitespace_aliases_and_preserves_internal_spaces() {
+        assert!(normalize_path(" report.txt ", false).is_err());
+        assert!(normalize_path("/ report.txt", false).is_err());
+        assert!(normalize_path("docs/file ", false).is_err());
+        assert_eq!(
+            normalize_path("docs /my file.txt", false).unwrap(),
+            "docs /my file.txt"
+        );
+        assert!(normalize_path("docs/../secret", false).is_err());
+        assert!(normalize_path("docs\\secret", false).is_err());
+        assert!(normalize_path("docs/\0secret", false).is_err());
     }
 
     #[test]

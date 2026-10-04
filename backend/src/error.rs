@@ -13,6 +13,8 @@ pub enum AppError {
     Forbidden,
     #[error("{0}")]
     BadRequest(String),
+    #[error("upload exceeds configured size limit of {limit} bytes")]
+    PayloadTooLarge { limit: usize },
     #[error("{0}")]
     NotFound(String),
     #[error("{0}")]
@@ -27,6 +29,7 @@ impl IntoResponse for AppError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,

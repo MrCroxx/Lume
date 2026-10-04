@@ -4,6 +4,7 @@ use anyhow::Context;
 use arc_swap::ArcSwap;
 use ipnet::IpNet;
 use sqlx::SqlitePool;
+use tokio::sync::Mutex;
 
 use crate::{
     archive::ArchiveTickets,
@@ -21,6 +22,7 @@ pub struct AppState {
     pub settings: Arc<ArcSwap<RuntimeSettings>>,
     pub cipher: Arc<SecretCipher>,
     pub archive_tickets: ArchiveTickets,
+    pub reload_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,18 +46,21 @@ impl AppState {
             settings: Arc::new(ArcSwap::from_pointee(settings)),
             cipher,
             archive_tickets: ArchiveTickets::new(),
+            reload_lock: Arc::new(Mutex::new(())),
         };
         state.reload_storages().await?;
         Ok(state)
     }
 
     pub async fn reload_settings(&self) -> anyhow::Result<()> {
+        let _guard = self.reload_lock.lock().await;
         self.settings
             .store(Arc::new(RuntimeSettings::load(&self.pool).await?));
         Ok(())
     }
 
     pub async fn reload_storages(&self) -> anyhow::Result<()> {
+        let _guard = self.reload_lock.lock().await;
         let records = sqlx::query_as::<_, (String, String)>(
             "SELECT id, config_ciphertext FROM storage_connections WHERE enabled = 1 ORDER BY id",
         )

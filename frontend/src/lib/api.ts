@@ -21,6 +21,7 @@ export class ApiError extends Error {
 
   constructor(message: string, status: number) {
     super(message)
+    this.name = 'ApiError'
     this.status = status
   }
 }
@@ -28,24 +29,52 @@ export class ApiError extends Error {
 const BATCH_DELETE_SIZE = 500
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  if (typeof init?.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
   const response = await fetch(path, {
     credentials: 'include',
     ...init,
-    headers: {
-      ...(init?.body && !(init.body instanceof File) ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
+    headers,
   })
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: response.statusText }))
-    throw new ApiError(payload.error ?? response.statusText, response.status)
+    throw new ApiError(await errorMessage(response), response.status)
   }
   return response
 }
 
+async function errorMessage(response: Response): Promise<string> {
+  const fallback = response.status === 413
+    ? 'Upload exceeds the server or reverse proxy size limit (HTTP 413)'
+    : `Request failed (HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''})`
+  const text = (await response.text().catch(() => '')).trim()
+  if (!text) return fallback
+  try {
+    const payload: unknown = JSON.parse(text)
+    if (payload && typeof payload === 'object' && 'error' in payload &&
+        typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error
+    }
+  } catch {
+    if (response.headers.get('Content-Type')?.startsWith('text/plain') && !text.startsWith('<')) {
+      return text.slice(0, 500)
+    }
+  }
+  return fallback
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await request(path, init)
-  return response.json() as Promise<T>
+  const contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()
+  if (contentType !== 'application/json' && !contentType?.endsWith('+json')) {
+    throw new ApiError('Unexpected server response: expected JSON', response.status)
+  }
+  try {
+    return await response.json() as T
+  } catch {
+    throw new ApiError('Server returned invalid JSON', response.status)
+  }
 }
 
 async function requestEmpty(path: string, init?: RequestInit): Promise<void> {
