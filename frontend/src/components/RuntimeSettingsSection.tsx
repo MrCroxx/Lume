@@ -18,7 +18,7 @@ export function RuntimeSettingsSection() {
       .then((value) => {
         setSettings(value)
         setProxyCidrs(value.trusted_proxy_cidrs.join('\n'))
-        setUploadMegabytes(Math.max(1, Math.round(value.max_upload_bytes / 1024 / 1024)))
+        setUploadMegabytes(value.max_upload_bytes / 1024 / 1024)
       })
       .catch((reason) =>
         toast.error(reason instanceof Error ? reason.message : 'Unable to load settings'),
@@ -28,14 +28,20 @@ export function RuntimeSettingsSection() {
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!settings) return
+    const maxUploadBytes = uploadMegabytes * 1024 * 1024
+    if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
+      toast.error('Maximum upload must be a positive whole number of bytes')
+      return
+    }
     setSaving(true)
     try {
       const updated = await api.updateRuntimeSettings({
         ...settings,
-        max_upload_bytes: uploadMegabytes * 1024 * 1024,
+        max_upload_bytes: maxUploadBytes,
         trusted_proxy_cidrs: splitValues(proxyCidrs),
       })
       setSettings(updated)
+      setUploadMegabytes(updated.max_upload_bytes / 1024 / 1024)
       setProxyCidrs(updated.trusted_proxy_cidrs.join('\n'))
       toast.success('Runtime settings updated')
     } catch (reason) {
@@ -72,10 +78,11 @@ export function RuntimeSettingsSection() {
               required
             />
           </Field>
-          <Field label="Maximum upload (MiB)">
+          <Field label="Maximum upload (MiB)" description="Per file. Reverse proxies may enforce a smaller limit.">
             <Input
               type="number"
-              min={1}
+              min={1 / 1024 / 1024}
+              step="any"
               value={uploadMegabytes}
               onChange={(event) => setUploadMegabytes(Number(event.target.value))}
               required

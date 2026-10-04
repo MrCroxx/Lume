@@ -1,15 +1,21 @@
+pub(crate) mod extract;
+#[cfg(test)]
+mod integration_tests;
+mod upload;
+
+use self::extract::{Json, Query};
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    Json, Router,
-    body::{Body, to_bytes},
-    extract::{ConnectInfo, Path, Query, State},
+    Router,
+    body::Body,
+    extract::{ConnectInfo, Path, State},
     http::{
         HeaderMap, StatusCode,
         header::{self, HeaderValue},
     },
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{any, delete, get, patch, post},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::Utc;
@@ -96,7 +102,19 @@ pub fn router(state: AppState) -> Router {
             "/api/admin/permissions/{permission_id}",
             delete(delete_permission),
         )
+        .route("/api", any(api_not_found))
+        .route("/api/{*path}", any(api_not_found))
+        .method_not_allowed_fallback(|| async {
+            (
+                StatusCode::METHOD_NOT_ALLOWED,
+                Json(json!({ "error": "method not allowed" })),
+            )
+        })
         .with_state(state)
+}
+
+async fn api_not_found() -> AppError {
+    AppError::NotFound("API endpoint not found".into())
 }
 
 async fn health() -> Json<Value> {
@@ -242,19 +260,26 @@ async fn update_account(
     } else {
         None
     };
+    let mut transaction = state.pool.begin().await?;
     let result = sqlx::query(
         "UPDATE users SET username = ?, password_hash = COALESCE(?, password_hash) WHERE id = ?",
     )
     .bind(&username)
     .bind(&new_password_hash)
     .bind(&auth.user.id)
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await;
     handle_user_write(result)?;
 
     if new_password_hash.is_some() {
-        revoke_other_sessions(&state, &auth.user.id, auth.session_hash.as_deref()).await?;
+        revoke_other_sessions(
+            &mut transaction,
+            &auth.user.id,
+            auth.session_hash.as_deref(),
+        )
+        .await?;
     }
+    transaction.commit().await?;
     let user = fetch_user(&state, &auth.user.id).await?;
     Ok(Json(user.into()))
 }
@@ -359,10 +384,6 @@ async fn download_file(
     let reader = storage.operator.reader(&path).await?;
     let stream = reader.into_bytes_stream(..).await?;
     let filename = path.rsplit('/').next().unwrap_or("download");
-    let safe_filename: String = filename
-        .chars()
-        .filter(|character| !matches!(character, '"' | '\r' | '\n'))
-        .collect();
     let mut response = Body::from_stream(stream).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -380,8 +401,7 @@ async fn download_file(
     );
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{safe_filename}\""))
-            .map_err(|error| AppError::Internal(error.into()))?,
+        crate::archive::attachment_content_disposition(filename)?,
     );
     Ok(response)
 }
@@ -391,6 +411,7 @@ async fn upload_file(
     auth: AuthContext,
     Path(storage_id): Path<String>,
     Query(query): Query<PathQuery>,
+    headers: HeaderMap,
     body: Body,
 ) -> AppResult<StatusCode> {
     let storage = get_storage(&state, &storage_id)?;
@@ -400,10 +421,7 @@ async fn upload_file(
     }
     require_access(&state, &auth, &storage_id, &path, Access::Write).await?;
     let max_upload_bytes = state.settings.load().max_upload_bytes;
-    let bytes = to_bytes(body, max_upload_bytes)
-        .await
-        .map_err(|_| AppError::BadRequest("upload exceeds configured size limit".into()))?;
-    storage.operator.write(&path, bytes).await?;
+    upload::upload(&storage.operator, &path, &headers, body, max_upload_bytes).await?;
     Ok(StatusCode::CREATED)
 }
 
@@ -688,7 +706,6 @@ async fn update_user(
     Json(request): Json<UpdateUserRequest>,
 ) -> AppResult<Json<UserView>> {
     require_admin(&auth)?;
-    let existing = fetch_user(&state, &user_id).await?;
     let username = validate_username(&request.username)?;
     validate_role(&request.role)?;
     if auth.user.id == user_id && !request.is_active {
@@ -696,13 +713,31 @@ async fn update_user(
             "you cannot disable your own account".into(),
         ));
     }
+    let password = request.password.filter(|password| !password.is_empty());
+    let password_hash = if let Some(password) = password {
+        validate_password(&password)?;
+        Some(hash_password(password).await.map_err(AppError::Internal)?)
+    } else {
+        None
+    };
+
+    // Acquire the SQLite write lock before checking the administrator count so
+    // concurrent demotions cannot both pass against the same snapshot.
+    let mut transaction = state.pool.begin_with("BEGIN IMMEDIATE").await?;
+    let existing = sqlx::query_as::<_, UserRecord>(
+        "SELECT id, username, password_hash, role, is_active, created_at FROM users WHERE id = ?",
+    )
+    .bind(&user_id)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or_else(|| AppError::NotFound("user not found".into()))?;
     if existing.role == "admin"
         && existing.is_active
         && (request.role != "admin" || !request.is_active)
     {
         let active_admins: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1")
-                .fetch_one(&state.pool)
+                .fetch_one(&mut *transaction)
                 .await?;
         if active_admins <= 1 {
             return Err(AppError::Conflict(
@@ -711,13 +746,6 @@ async fn update_user(
         }
     }
 
-    let password = request.password.filter(|password| !password.is_empty());
-    let password_hash = if let Some(password) = password {
-        validate_password(&password)?;
-        Some(hash_password(password).await.map_err(AppError::Internal)?)
-    } else {
-        None
-    };
     let result = sqlx::query(
         "UPDATE users SET username = ?, password_hash = COALESCE(?, password_hash), role = ?, is_active = ? WHERE id = ?",
     )
@@ -726,7 +754,7 @@ async fn update_user(
     .bind(&request.role)
     .bind(request.is_active)
     .bind(&user_id)
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await;
     handle_user_write(result)?;
 
@@ -734,8 +762,9 @@ async fn update_user(
         let current_session_hash = (auth.user.id == user_id && request.is_active)
             .then_some(auth.session_hash.as_deref())
             .flatten();
-        revoke_other_sessions(&state, &user_id, current_session_hash).await?;
+        revoke_other_sessions(&mut transaction, &user_id, current_session_hash).await?;
     }
+    transaction.commit().await?;
     let user = fetch_user(&state, &user_id).await?;
     Ok(Json(user.into()))
 }
@@ -850,6 +879,8 @@ async fn update_runtime_settings(
             "maximum upload size must be greater than zero".into(),
         ));
     }
+    let max_upload_bytes = i64::try_from(request.max_upload_bytes)
+        .map_err(|_| AppError::BadRequest("maximum upload size is too large".into()))?;
     let trusted_proxy_cidrs = normalize_values(request.trusted_proxy_cidrs);
     parse_cidrs(&trusted_proxy_cidrs).map_err(bad_request)?;
     sqlx::query(
@@ -861,7 +892,7 @@ async fn update_runtime_settings(
     )
     .bind(request.session_hours)
     .bind(request.secure_cookies)
-    .bind(request.max_upload_bytes as i64)
+    .bind(max_upload_bytes)
     .bind(
         serde_json::to_string(&trusted_proxy_cidrs)
             .map_err(|error| AppError::Internal(error.into()))?,

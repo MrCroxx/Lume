@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Database, Menu } from 'lucide-react'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
 import { AdminPanel } from './components/AdminPanel'
 import { AccountSettingsDialog } from './components/AccountSettingsDialog'
 import { Brand } from './components/Brand'
@@ -95,15 +95,22 @@ function App() {
     setStoragesLoaded(false)
     try {
       setStorages(await api.storages())
-    } finally {
       setStoragesLoaded(true)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'Unable to load storage connections')
     }
   }
 
   async function signOut() {
     setMobileSidebarOpen(false)
-    await api.logout()
-    setSession(null)
+    try {
+      await api.logout()
+      setSession(null)
+      setStorages([])
+      setStoragesLoaded(false)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'Unable to sign out')
+    }
   }
 
   function navigateFromSidebar(nextRoute: AppRoute) {
@@ -168,13 +175,16 @@ function App() {
           />
         ) : selectedStorage ? (
           <Explorer
-            key={selectedStorage.id}
+            key={`${selectedStorage.id}\0${selectedPath}`}
             storage={selectedStorage}
             path={selectedPath}
             canGoBack={historyPosition.index > 0}
             canGoForward={historyPosition.index < historyPosition.maxIndex}
             onBack={() => window.history.back()}
             onForward={() => window.history.forward()}
+            onNavigateToConnections={() =>
+              navigate({ page: 'files', storageId: null, path: '' })
+            }
             onNavigate={(path) =>
               navigate({ page: 'files', storageId: selectedStorage.id, path })
             }

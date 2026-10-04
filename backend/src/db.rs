@@ -81,7 +81,10 @@ async fn ensure_runtime_settings(pool: &SqlitePool, config: &Config) -> anyhow::
     )
     .bind(config.auth.session_hours)
     .bind(config.auth.secure_cookies)
-    .bind(config.server.max_upload_bytes as i64)
+    .bind(
+        i64::try_from(config.server.max_upload_bytes)
+            .context("maximum upload size is too large")?,
+    )
     .bind(serde_json::to_string(&config.auth.trusted_proxy_cidrs)?)
     .execute(pool)
     .await?;
@@ -128,7 +131,7 @@ async fn import_legacy_bypass_rules(pool: &SqlitePool, config: &Config) -> anyho
     Ok(())
 }
 
-const SCHEMA: &[&str] = &[
+pub(crate) const SCHEMA: &[&str] = &[
     "PRAGMA journal_mode = WAL",
     r#"CREATE TABLE IF NOT EXISTS system_metadata (
         key TEXT PRIMARY KEY,

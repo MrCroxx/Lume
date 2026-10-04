@@ -38,6 +38,7 @@ export function Explorer({
   canGoForward,
   onBack,
   onForward,
+  onNavigateToConnections,
   onNavigate,
 }: {
   storage: Storage
@@ -46,6 +47,7 @@ export function Explorer({
   canGoForward: boolean
   onBack: () => void
   onForward: () => void
+  onNavigateToConnections: () => void
   onNavigate: (path: string) => void
 }) {
   const path = normalizeDirectoryPath(currentPath)
@@ -59,6 +61,7 @@ export function Explorer({
   const [folderName, setFolderName] = useState('')
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [archivePreparing, setArchivePreparing] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
   const listRequestId = useRef(0)
   const searchRequestId = useRef(0)
@@ -71,6 +74,7 @@ export function Explorer({
       if (listRequestId.current === currentRequest) setEntries(nextEntries)
     } catch (reason) {
       if (listRequestId.current === currentRequest) {
+        setEntries([])
         toast.error(reason instanceof Error ? reason.message : 'Unable to load files')
       }
     } finally {
@@ -84,6 +88,7 @@ export function Explorer({
 
   useEffect(() => {
     void loadFiles()
+    return () => { listRequestId.current += 1 }
   }, [loadFiles])
 
   useEffect(() => {
@@ -100,18 +105,26 @@ export function Explorer({
         if (searchRequestId.current === currentRequest) setSearchResults(nextResults)
       } catch (reason) {
         if (searchRequestId.current === currentRequest) {
+          setSearchResults([])
           toast.error(reason instanceof Error ? reason.message : 'Search failed')
         }
       } finally {
         if (searchRequestId.current === currentRequest) setSearchLoading(false)
       }
     }, 280)
-    return () => window.clearTimeout(handle)
+    return () => {
+      window.clearTimeout(handle)
+      searchRequestId.current += 1
+    }
   }, [query, path, storage.id])
 
   async function createFolder() {
-    const name = folderName.trim().replaceAll('/', '')
+    const name = folderName.trim()
     if (!name) return
+    if (name === '.' || name === '..' || name.includes('/') || name.includes('\\') || name.includes('\0')) {
+      toast.error('Folder name cannot contain slashes or be . or ..')
+      return
+    }
     try {
       await api.createDirectory(storage.id, joinPath(path, `${name}/`))
       setFolderOpen(false)
@@ -124,17 +137,27 @@ export function Explorer({
   }
 
   async function upload(files: FileList | null) {
-    if (!files?.length) return
-    const toastId = toast.loading(`Uploading ${files.length} item${files.length > 1 ? 's' : ''}…`)
+    if (!files?.length || uploading) return
+    const selectedFiles = Array.from(files)
+    setUploading(true)
+    const toastId = toast.loading(`Uploading ${selectedFiles.length} item${selectedFiles.length > 1 ? 's' : ''}…`)
+    let uploaded = 0
+    let currentFile = ''
     try {
-      for (const file of files) {
+      for (const file of selectedFiles) {
+        currentFile = file.name
         await api.upload(storage.id, joinPath(path, file.name), file)
+        uploaded += 1
       }
       toast.success('Upload complete', { id: toastId })
-      await loadFiles()
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Upload failed', { id: toastId })
+      toast.error(`Upload failed: ${currentFile}`, {
+        id: toastId,
+        description: `${reason instanceof Error ? reason.message : 'Upload failed'}. ${uploaded} of ${selectedFiles.length} files uploaded.`,
+      })
     } finally {
+      if (uploaded > 0) await loadFiles()
+      setUploading(false)
       if (uploadRef.current) uploadRef.current.value = ''
     }
   }
@@ -245,13 +268,15 @@ export function Explorer({
           <Button
             variant="secondary"
             size="icon"
-            disabled={parent === null}
             onClick={() => {
-              if (parent === null) return
-              navigateTo(parent)
+              if (parent === null) {
+                onNavigateToConnections()
+              } else {
+                navigateTo(parent)
+              }
             }}
-            aria-label="Go to parent directory"
-            title="Go to parent directory"
+            aria-label={parent === null ? 'Go to all connections' : 'Go to parent directory'}
+            title={parent === null ? 'Go to all connections' : 'Go to parent directory'}
           >
             <ArrowUp className="size-4" />
           </Button>
@@ -354,10 +379,11 @@ export function Explorer({
               <Button
                 size="icon"
                 onClick={() => uploadRef.current?.click()}
+                disabled={uploading}
                 aria-label="Upload files"
                 title="Upload files"
               >
-                <Upload className="size-4" />
+                {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}
               </Button>
               <input
                 ref={uploadRef}

@@ -158,10 +158,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 npm --prefix frontend run lint
+npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
 ## Current limitations
+
+See [upload and API notes](docs/upload-and-api.md) for upload limits, temporary disk requirements, proxy configuration, and regression coverage.
 
 Recursive search is intended for small and medium-sized directory trees. Each request scans at most 50,000 entries and returns at most 500 results. Very large object stores will benefit from a dedicated indexer in a future release.
 
