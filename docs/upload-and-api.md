@@ -1,36 +1,46 @@
-# 上传、错误响应与一致性修复
+# Uploads, API errors, and consistency
 
-## 上传上限
+## Upload limits and storage behavior
 
-单文件默认上限为 256 MiB。在管理页面的 Runtime settings → Maximum upload (MiB) 修改，保存后对新请求生效。已在传输中的请求沿用开始时的上限。
+The default per-file limit is 4 GiB (4096 MiB, 4,294,967,296 bytes). Set Maximum upload (MiB) to `0` in Runtime settings to disable the application limit. Changes apply to new requests; uploads already in progress retain their initial limit. The database migration allows zero while preserving existing installations' saved settings.
 
-上传接口直接接收文件二进制，请求方法为 `PUT /api/files/{storage_id}?path=...`。它不使用 JSON 请求体提取器，因此不受普通 JSON 接口的 2 MiB 限制。上传成功返回空 `201 Created`，前端不能对该响应调用 JSON 解析。
+Uploads send raw binary data to `PUT /api/files/{storage_id}?path=...`. They do not use the JSON body extractor and are not subject to its 2 MiB limit. Successful uploads return an empty `201 Created` response, which must not be parsed as JSON.
 
-接收过程先写入匿名临时文件，按实际接收字节计数；存在 Content-Length 时也会预检。超限返回包含具体字节上限的 JSON `413`；断流或长度不符返回 JSON `400`。接收完成前不会打开目标文件，避免失败请求覆盖已有内容。
+The server first receives the body into an anonymous temporary file and counts the actual bytes received. When a nonzero limit is configured, it also checks Content-Length before receiving the body. Exceeding the limit returns a JSON `413` with the configured byte limit; interrupted or mismatched bodies return JSON `400`. The destination is not opened until the entire body has been received, protecting existing files from failed transfers.
 
-临时文件由系统临时目录承载，可通过 `TMPDIR` 指向容量充足的磁盘目录。每个正在接收或写入存储的上传会暂占最多一份完整文件空间，结束或失败后释放。临时目录若位于 tmpfs，仍会消耗内存。
+Temporary files use the system temporary directory. Set `TMPDIR` to a directory with sufficient disk space if needed. Each active upload can temporarily occupy one complete file's worth of space while receiving or writing to storage. That temporary space is released when the operation finishes or fails. A temporary directory backed by tmpfs still consumes memory.
 
-接收完成后以 8 MiB 分块交给 OpenDAL writer。当前 OpenDAL 0.58.1 的 WebDAV 驱动使用 OneShotWriter，会在驱动内缓冲完整文件，因此 WebDAV 大文件仍需要相应内存。目标存储提交失败时的原子性取决于该存储驱动；接收阶段的暂存不等于所有远端写入都支持事务回滚。
+After receiving the body, the server passes it to the OpenDAL writer in 8 MiB chunks. OpenDAL 0.58.1's WebDAV driver uses OneShotWriter and buffers the complete file internally, so large WebDAV uploads still require corresponding memory. Atomicity when committing to the destination depends on the storage driver; staging the request body does not guarantee transactional rollback for remote writes.
 
-反向代理有独立的大小、超时和缓冲限制。应用无法覆盖这些配置。代理返回的 HTML 错误页会被前端转换为带 HTTP 状态的错误提示。
+Reverse proxies have independent size, timeout, and buffering limits that the application cannot override. Proxy HTML error pages are converted into readable errors containing the HTTP status.
 
-## 其他修复
+## Drag and drop and upload progress
 
-- JSON、查询参数校验失败，以及未知 API 路由、错误 HTTP 方法，使用一致的 JSON 错误格式。
-- 前端区分空成功响应、JSON 响应和文本／HTML 错误，不再让二次解析异常掩盖原始错误。
-- 上传部分成功后刷新文件列表，并显示成功数量及失败文件；上传中禁用重复提交按钮。
-- 目录切换隔离列表状态，废弃旧的列表和搜索结果，避免旧目录响应覆盖新目录。
-- 下载使用 ASCII 回退文件名和 UTF-8 `filename*`，支持 Unicode 文件名。
-- OpenDAL 会再次裁剪整个路径的首尾空白。应用拒绝这类会映射到另一文件的路径，避免悄悄改名或覆盖；文件名内部的普通空格正常保留。
-- 上传上限写入 SQLite 前检查整数范围；前端保存设置时不再把原上限舍入到整数 MiB。
-- 管理员降级检查与修改在 SQLite 写事务中完成，防止并发操作移除全部管理员。
-- 密码修改与会话撤销在同一事务中完成，撤销失败时回滚账号修改。
-- 运行时配置重载串行发布，避免较旧的异步重载覆盖较新的状态。
-- ZIP 下载在消费票据时重新验证权限和存储配置，防止撤销权限后继续使用先前的票据。
+Drop files and folders anywhere in the file explorer to upload into the current directory. The overlay shows the destination without changing its case. Folder traversal preserves nested paths and empty directories and reads every batch returned by the browser's directory reader.
 
-## 验证
+The collapsible upload panel shows per-file bytes sent, queued/uploading/saving/completed/failed states, and overall progress. The queue runs up to three requests concurrently, supports adding batches and navigating between directories, and offers retrying failed items or cancelling remaining work. Its virtualized list keeps large batches bounded in the DOM. Files wait for their parent directories to be created, and overlapping destinations are serialized.
 
-后端路由测试覆盖上传边界、断流、文件保护、动态配置、权限、响应格式、Unicode 文件名、并发管理员降级、会话撤销失败回滚和归档权限撤销。前端测试使用 Node.js 自带测试运行器，覆盖空成功响应和异常响应；已加入 CI。
+A 100% transfer enters the saving state until the server confirms success. The panel automatically collapses when every task succeeds; failed or cancelled tasks prevent automatic collapse. Users can expand it again to inspect completed work. Clear removes completed and cancelled entries; Cancel stops pending and active requests.
+
+The queue lives in the current page and does not survive a refresh or browser closure. A leave-page warning is requested while tasks are unfinished. Already completed files and created directories remain in storage. Temporary receive files are cleaned up after an interrupted transfer; a request already writing to destination storage may still complete, and cleanup of partial destination writes depends on the storage backend.
+
+## API and consistency behavior
+
+- JSON validation, query validation, unknown API routes, and unsupported HTTP methods use consistent JSON errors.
+- The frontend distinguishes empty success responses, JSON responses, and text or HTML errors so secondary parsing failures do not hide the original error.
+- Directory navigation isolates listing state and discards stale listing and search responses.
+- Downloads use an ASCII fallback filename and UTF-8 `filename*` for Unicode names.
+- OpenDAL trims whitespace at the ends of the entire path. The application rejects paths that would alias another file rather than silently renaming or overwriting it; ordinary internal spaces remain valid.
+- Upload limits are checked against SQLite's integer range before persistence. The settings form preserves fractional MiB values rather than rounding existing limits.
+- Administrator demotion checks and updates share a SQLite write transaction to prevent concurrent changes from removing all active administrators.
+- Password changes and session revocation share a transaction and roll back together if revocation fails.
+- Runtime configuration reloads are serialized to prevent older asynchronous reloads from overwriting newer state.
+- ZIP downloads revalidate permissions and storage configuration when consuming a ticket.
+- File and storage-connection deletion use in-app confirmation dialogs. File deletion shows a selection preview and warns when folder contents are included; deleting a storage connection removes its path permissions without deleting stored files.
+
+## Validation
+
+Backend tests cover upload boundaries, interrupted bodies, existing-file protection, dynamic limits including zero, database migration, permissions, response formats, Unicode filenames, concurrent administrator demotions, session-revocation rollback, and archive authorization revocation. Frontend tests use Node.js's test runner and cover API responses, dropped directories, upload progress, cancellation, queue concurrency, retries, and destination ordering. These checks run in CI.
 
 ```bash
 cargo fmt --all -- --check
@@ -41,4 +51,4 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-路由测试使用临时本地存储与 SQLite，不依赖真实用户数据。FTP、SFTP、WebDAV 和 S3 的实际部署仍需各自的服务端集成验证。
+Route tests use temporary local storage and SQLite, not production data. FTP, SFTP, WebDAV, and S3 deployments require integration validation against their respective servers.

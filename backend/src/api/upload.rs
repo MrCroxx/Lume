@@ -31,7 +31,7 @@ pub async fn upload(
                 .ok_or_else(|| AppError::BadRequest("invalid Content-Length".into()))
         })
         .transpose()?;
-    if expected_length.is_some_and(|length| length > limit as u64) {
+    if limit != 0 && expected_length.is_some_and(|length| length > limit as u64) {
         return Err(AppError::PayloadTooLarge { limit });
     }
 
@@ -44,20 +44,22 @@ pub async fn upload(
         .map_err(|error| AppError::Internal(error.into()))?;
     let mut file = File::from_std(file);
     let mut stream = body.into_data_stream();
-    let mut received = 0_usize;
+    let mut received = 0_u64;
     while let Some(bytes) = stream.try_next().await.map_err(|error| {
         tracing::debug!(%error, "upload request body failed");
         AppError::BadRequest("upload body was interrupted or malformed".into())
     })? {
-        if bytes.len() > limit - received {
+        if limit != 0 && bytes.len() as u64 > limit as u64 - received {
             return Err(AppError::PayloadTooLarge { limit });
         }
-        received += bytes.len();
+        received = received
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| AppError::BadRequest("upload size exceeds supported range".into()))?;
         file.write_all(&bytes)
             .await
             .map_err(|error| AppError::Internal(error.into()))?;
     }
-    if expected_length.is_some_and(|length| length != received as u64) {
+    if expected_length.is_some_and(|length| length != received) {
         return Err(AppError::BadRequest(
             "upload size does not match Content-Length".into(),
         ));

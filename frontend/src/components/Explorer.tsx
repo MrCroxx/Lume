@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   ArrowDownToLine,
   ArrowLeft,
@@ -23,6 +23,9 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
+import { useUploadQueue } from '../lib/upload-context'
+import type { UploadItem } from '../lib/dropped-files'
+import { DropUploadOverlay } from './DropUploadOverlay'
 import { useEntrySelection } from '../lib/entry-selection'
 import { normalizeDirectoryPath, pathIsWithin } from '../lib/routes'
 import { cn, formatBytes, formatDate } from '../lib/utils'
@@ -63,8 +66,10 @@ export function Explorer({
   const [folderOpen, setFolderOpen] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [deleteEntries, setDeleteEntries] = useState<FileEntry[] | null>(null)
   const [archivePreparing, setArchivePreparing] = useState(false)
-  const [uploading, setUploading] = useState(false)
+  const uploadQueue = useUploadQueue()
+  const uploadRevision = useSyncExternalStore(uploadQueue.subscribe, () => uploadQueue.getSnapshot().revision)
   const uploadRef = useRef<HTMLInputElement>(null)
   const listRequestId = useRef(0)
   const searchRequestId = useRef(0)
@@ -139,44 +144,32 @@ export function Explorer({
     }
   }
 
-  async function upload(files: FileList | null) {
-    if (!files?.length || uploading) return
-    const selectedFiles = Array.from(files)
-    setUploading(true)
-    const toastId = toast.loading(`Uploading ${selectedFiles.length} item${selectedFiles.length > 1 ? 's' : ''}…`)
-    let uploaded = 0
-    let currentFile = ''
-    try {
-      for (const file of selectedFiles) {
-        currentFile = file.name
-        await api.upload(storage.id, joinPath(path, file.name), file)
-        uploaded += 1
-      }
-      toast.success('Upload complete', { id: toastId })
-    } catch (reason) {
-      toast.error(`Upload failed: ${currentFile}`, {
-        id: toastId,
-        description: `${reason instanceof Error ? reason.message : 'Upload failed'}. ${uploaded} of ${selectedFiles.length} files uploaded.`,
-      })
-    } finally {
-      if (uploaded > 0) await loadFiles()
-      setUploading(false)
-      if (uploadRef.current) uploadRef.current.value = ''
+  function upload(items: Promise<UploadItem[]>) {
+    if (!storage.can_write) {
+      void items.catch(() => {})
+      return
     }
+    void uploadQueue.add(storage.id, storage.name, path, items).catch((reason) => {
+      toast.error(reason instanceof Error ? reason.message : 'Unable to prepare upload')
+    })
   }
 
-  async function removeSelected(selectedEntries: FileEntry[]) {
-    const directoryCount = selectedEntries.filter((entry) => entry.kind === 'directory').length
-    const detail = directoryCount
-      ? ` This includes ${directoryCount} director${directoryCount === 1 ? 'y' : 'ies'} and all of their contents.`
-      : ''
-    if (
-      !window.confirm(
-        `Delete ${selectedEntries.length} selected item${selectedEntries.length === 1 ? '' : 's'}?${detail} This action cannot be undone.`,
-      )
-    )
-      return
+  function uploadFiles(files: FileList | null) {
+    if (!files?.length) return
+    upload(Promise.resolve(Array.from(files, (file) => ({
+      kind: 'file' as const, path: file.name, file,
+    }))))
+    if (uploadRef.current) uploadRef.current.value = ''
+  }
 
+  useEffect(() => {
+    if (!uploadRevision) return
+    const timer = window.setTimeout(() => void loadFiles(), 350)
+    return () => window.clearTimeout(timer)
+  }, [uploadRevision, loadFiles])
+
+  async function removeSelected(selectedEntries: FileEntry[]) {
+    if (batchDeleting || !selectedEntries.length) return
     setBatchDeleting(true)
     try {
       const result = await api.removeMany(storage.id, selectedEntries)
@@ -201,6 +194,7 @@ export function Explorer({
           },
         )
       }
+      setDeleteEntries(null)
       await loadFiles()
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'Batch delete failed')
@@ -244,6 +238,11 @@ export function Explorer({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <DropUploadOverlay
+        disabled={!storage.can_write}
+        destination={`${storage.name} / ${path}`}
+        onUpload={(items) => void upload(items)}
+      />
       <header className="border-b border-slate-200 bg-white px-5 py-4 sm:px-8">
         <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-3">
           <div className="flex items-center gap-1">
@@ -355,7 +354,7 @@ export function Explorer({
                   variant="danger"
                   size="icon"
                   disabled={batchDeleting || archivePreparing}
-                  onClick={() => void removeSelected(selectedEntries)}
+                  onClick={() => setDeleteEntries([...selectedEntries])}
                   aria-label="Delete selected items"
                   title="Delete selected items"
                 >
@@ -382,18 +381,17 @@ export function Explorer({
               <Button
                 size="icon"
                 onClick={() => uploadRef.current?.click()}
-                disabled={uploading}
                 aria-label="Upload files"
                 title="Upload files"
               >
-                {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                <Upload className="size-4" />
               </Button>
               <input
                 ref={uploadRef}
                 type="file"
                 multiple
                 className="hidden"
-                onChange={(event) => void upload(event.target.files)}
+                onChange={(event) => uploadFiles(event.target.files)}
               />
             </>
           )}
@@ -458,6 +456,42 @@ export function Explorer({
       </main>
 
       {infoEntry && <FileInfoDialog key={infoEntry.path} storageId={storage.id} entry={infoEntry} onClose={() => setInfoEntry(null)} />}
+
+      <Dialog
+        open={deleteEntries !== null}
+        onOpenChange={(open) => { if (!open && !batchDeleting) setDeleteEntries(null) }}
+        title={`Delete ${deleteEntries?.length ?? 0} item${deleteEntries?.length === 1 ? '' : 's'}?`}
+        description="This action cannot be undone. Review the selected items before deleting."
+      >
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 truncate text-xs text-slate-500" title={`${storage.name} / ${path}`}>
+            {storage.name} / {path}
+          </p>
+          <ul className="space-y-2">
+            {deleteEntries?.slice(0, 5).map((entry) => (
+              <li key={entry.path} className="flex min-w-0 items-center gap-2 text-sm text-slate-700">
+                {entry.kind === 'directory' ? <Folder className="size-4 shrink-0 text-slate-400" /> : <File className="size-4 shrink-0 text-slate-400" />}
+                <span className="truncate" title={entry.path}>{entry.name}</span>
+              </li>
+            ))}
+          </ul>
+          {(deleteEntries?.length ?? 0) > 5 && (
+            <p className="mt-3 text-xs text-slate-500">And {deleteEntries!.length - 5} more items</p>
+          )}
+        </div>
+        {deleteEntries?.some((entry) => entry.kind === 'directory') && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+            Selected folders and all of their contents will be deleted.
+          </p>
+        )}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button autoFocus variant="ghost" disabled={batchDeleting} onClick={() => setDeleteEntries(null)}>Cancel</Button>
+          <Button variant="danger" disabled={batchDeleting} onClick={() => { if (deleteEntries) void removeSelected(deleteEntries) }}>
+            {batchDeleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {batchDeleting ? 'Deleting…' : 'Delete items'}
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog
         open={folderOpen}

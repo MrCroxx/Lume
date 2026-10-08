@@ -6,6 +6,7 @@ import { AccountSettingsDialog } from './components/AccountSettingsDialog'
 import { Brand } from './components/Brand'
 import { ConnectionsOverview } from './components/ConnectionsOverview'
 import { Explorer } from './components/Explorer'
+import { UploadProvider } from './components/UploadProvider'
 import { LoginPage } from './components/LoginPage'
 import { MobileSidebar, Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
@@ -155,78 +156,80 @@ function App() {
       : ''
 
   return (
-    <div className="flex h-full overflow-hidden bg-[#f7f8f9] text-slate-950">
-      <Sidebar
-        session={session}
-        storages={storages}
-        page={page}
-        selectedStorageId={selectedStorageId}
-        collapsed={sidebarCollapsed}
-        className="hidden md:flex"
-        onNavigate={navigateFromSidebar}
-        onAccount={openAccountSettings}
-        onLogout={signOut}
-        onCollapseToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
-      />
-
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <MobileHeader
-          open={mobileSidebarOpen}
-          onToggleSidebar={() => setMobileSidebarOpen((open) => !open)}
+    <UploadProvider key={session.user.id}>
+      <div className="flex h-full overflow-hidden bg-[#f7f8f9] text-slate-950">
+        <Sidebar
+          session={session}
+          storages={storages}
+          page={page}
+          selectedStorageId={selectedStorageId}
+          collapsed={sidebarCollapsed}
+          className="hidden md:flex"
+          onNavigate={navigateFromSidebar}
+          onAccount={openAccountSettings}
+          onLogout={signOut}
+          onCollapseToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
         />
-        {page === 'admin' && session.user.role === 'admin' ? (
-          <AdminPanel
-            storages={storages}
-            currentUserId={session.user.id}
-            onCurrentUserUpdated={async () => setSession(await api.session())}
-            onStoragesChanged={loadStorages}
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <MobileHeader
+            open={mobileSidebarOpen}
+            onToggleSidebar={() => setMobileSidebarOpen((open) => !open)}
           />
-        ) : selectedStorage ? (
-          <Explorer
-            key={`${selectedStorage.id}\0${selectedPath}`}
-            storage={selectedStorage}
-            path={selectedPath}
-            canGoBack={historyPosition.index > 0}
-            canGoForward={historyPosition.index < historyPosition.maxIndex}
-            onBack={() => window.history.back()}
-            onForward={() => window.history.forward()}
-            onNavigateToConnections={() =>
-              navigate({ page: 'files', storageId: null, path: '' })
-            }
-            onNavigate={(path) =>
-              navigate({ page: 'files', storageId: selectedStorage.id, path })
-            }
-          />
-        ) : storages.length > 0 ? (
-          <ConnectionsOverview
-            storages={storages}
-            onOpenStorage={(storageId, path) => {
-              navigate({ page: 'files', storageId, path })
-            }}
-          />
-        ) : (
-          <NoStorage />
-        )}
+          {page === 'admin' && session.user.role === 'admin' ? (
+            <AdminPanel
+              storages={storages}
+              currentUserId={session.user.id}
+              onCurrentUserUpdated={async () => setSession(await api.session())}
+              onStoragesChanged={loadStorages}
+            />
+          ) : selectedStorage ? (
+            <Explorer
+              key={`${selectedStorage.id}\0${selectedPath}`}
+              storage={selectedStorage}
+              path={selectedPath}
+              canGoBack={historyPosition.index > 0}
+              canGoForward={historyPosition.index < historyPosition.maxIndex}
+              onBack={() => window.history.back()}
+              onForward={() => window.history.forward()}
+              onNavigateToConnections={() =>
+                navigate({ page: 'files', storageId: null, path: '' })
+              }
+              onNavigate={(path) =>
+                navigate({ page: 'files', storageId: selectedStorage.id, path })
+              }
+            />
+          ) : storages.length > 0 ? (
+            <ConnectionsOverview
+              storages={storages}
+              onOpenStorage={(storageId, path) => {
+                navigate({ page: 'files', storageId, path })
+              }}
+            />
+          ) : (
+            <NoStorage />
+          )}
+        </div>
+        <MobileSidebar
+          open={mobileSidebarOpen}
+          onOpenChange={setMobileSidebarOpen}
+          session={session}
+          storages={storages}
+          page={page}
+          selectedStorageId={selectedStorageId}
+          onNavigate={navigateFromSidebar}
+          onAccount={openAccountSettings}
+          onLogout={signOut}
+        />
+        <AccountSettingsDialog
+          session={session}
+          open={accountSettingsOpen}
+          onOpenChange={setAccountSettingsOpen}
+          onUpdated={(user) => setSession({ ...session, user })}
+        />
+        <Toaster richColors position="top-right" />
       </div>
-      <MobileSidebar
-        open={mobileSidebarOpen}
-        onOpenChange={setMobileSidebarOpen}
-        session={session}
-        storages={storages}
-        page={page}
-        selectedStorageId={selectedStorageId}
-        onNavigate={navigateFromSidebar}
-        onAccount={openAccountSettings}
-        onLogout={signOut}
-      />
-      <AccountSettingsDialog
-        session={session}
-        open={accountSettingsOpen}
-        onOpenChange={setAccountSettingsOpen}
-        onUpdated={(user) => setSession({ ...session, user })}
-      />
-      <Toaster richColors position="bottom-right" />
-    </div>
+    </UploadProvider>
   )
 }
 
