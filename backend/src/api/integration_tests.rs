@@ -277,13 +277,95 @@ async fn runtime_upload_limit_changes_apply_to_subsequent_requests() {
 }
 
 #[tokio::test]
+async fn zero_upload_limit_accepts_known_and_unknown_lengths_and_can_be_reenabled() {
+    let app = TestApp::new(4).await;
+    for limit in [0, 4] {
+        let response = app
+            .send(
+                "PUT",
+                "/api/admin/settings",
+                Body::from(
+                    json!({
+                        "session_hours": 24, "secure_cookies": false, "max_upload_bytes": limit,
+                        "trusted_proxy_cidrs": [],
+                    })
+                    .to_string(),
+                ),
+                &[("Content-Type", "application/json")],
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        app.state.reload_settings().await.unwrap();
+        assert_eq!(app.state.settings.load().max_upload_bytes, limit);
+        for known_length in [true, false] {
+            let body = Body::from_stream(stream::iter([
+                Ok::<_, std::io::Error>(Bytes::from_static(b"1234")),
+                Ok(Bytes::from_static(b"5678")),
+            ]));
+            let headers = if known_length {
+                vec![("Content-Length", "8")]
+            } else {
+                vec![]
+            };
+            let response = app
+                .send("PUT", "/api/files/local?path=file", body, &headers)
+                .await;
+            assert_eq!(
+                response.status(),
+                if limit == 0 {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::PAYLOAD_TOO_LARGE
+                }
+            );
+            assert_eq!(
+                tokio::fs::read(app.root.path().join("file")).await.unwrap(),
+                b"12345678"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn unlimited_upload_still_rejects_interrupted_or_mismatched_bodies() {
+    let app = TestApp::new(0).await;
+    tokio::fs::write(app.root.path().join("file"), b"original")
+        .await
+        .unwrap();
+    let body = Body::from_stream(stream::iter([
+        Ok(Bytes::from_static(b"partial")),
+        Err(std::io::Error::other("connection reset")),
+    ]));
+    let response = app
+        .send("PUT", "/api/files/local?path=file", body, &[])
+        .await;
+    assert_json_error(response, StatusCode::BAD_REQUEST).await;
+    let response = app
+        .send(
+            "PUT",
+            "/api/files/local?path=file",
+            Body::from("short"),
+            &[("Content-Length", "10")],
+        )
+        .await;
+    assert_json_error(response, StatusCode::BAD_REQUEST).await;
+    assert_eq!(
+        tokio::fs::read(app.root.path().join("file")).await.unwrap(),
+        b"original"
+    );
+}
+
+#[tokio::test]
 async fn invalid_settings_do_not_modify_persisted_limit() {
     let app = TestApp::new(4).await;
-    for limit in [0_u64, u64::MAX] {
+    for (limit, status) in [
+        (json!(-1), StatusCode::UNPROCESSABLE_ENTITY),
+        (json!(u64::MAX), StatusCode::BAD_REQUEST),
+    ] {
         let response = app.send("PUT", "/api/admin/settings", Body::from(json!({
             "session_hours": 24, "secure_cookies": false, "max_upload_bytes": limit, "trusted_proxy_cidrs": [],
         }).to_string()), &[("Content-Type", "application/json")]).await;
-        assert_json_error(response, StatusCode::BAD_REQUEST).await;
+        assert_json_error(response, status).await;
         let persisted: i64 =
             sqlx::query_scalar("SELECT max_upload_bytes FROM runtime_settings WHERE id = 1")
                 .fetch_one(&app.state.pool)

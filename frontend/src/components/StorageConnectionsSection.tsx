@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Database, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Database, LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
 import type { SaveStorageConnection, Storage, StorageConnection } from '../types'
@@ -10,6 +10,9 @@ import { Input } from './ui/input'
 export function StorageConnectionsSection({ onChanged }: { onChanged: () => Promise<void> }) {
   const [connections, setConnections] = useState<StorageConnection[]>([])
   const [editing, setEditing] = useState<StorageConnection | null | undefined>(undefined)
+
+  const [deleting, setDeleting] = useState<StorageConnection | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   async function load() {
     try {
@@ -83,15 +86,7 @@ export function StorageConnectionsSection({ onChanged }: { onChanged: () => Prom
               variant="ghost"
               size="icon"
               className="text-slate-400 hover:text-red-600"
-              onClick={async () => {
-                if (!window.confirm(`Delete ${connection.name} and its path permissions?`)) return
-                try {
-                  await api.deleteStorageConnection(connection.id)
-                  await Promise.all([load(), onChanged()])
-                } catch (reason) {
-                  toast.error(reason instanceof Error ? reason.message : 'Unable to delete storage')
-                }
-              }}
+              onClick={() => setDeleting(connection)}
             >
               <Trash2 className="size-4" />
               <span className="sr-only">Delete storage</span>
@@ -99,6 +94,36 @@ export function StorageConnectionsSection({ onChanged }: { onChanged: () => Prom
           </div>
         ))
       )}
+      <Dialog
+        open={deleting !== null}
+        onOpenChange={(open) => { if (!open && !deleteBusy) setDeleting(null) }}
+        title="Delete storage connection?"
+        description="The connection and its path permissions will be removed. Files in the storage will not be deleted."
+      >
+        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <Database className="size-5 shrink-0 text-slate-400" />
+          <span className="break-all text-sm font-medium text-slate-700">{deleting?.name}</span>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button autoFocus variant="ghost" disabled={deleteBusy} onClick={() => setDeleting(null)}>Cancel</Button>
+          <Button variant="danger" disabled={deleteBusy} onClick={async () => {
+            if (!deleting || deleteBusy) return
+            setDeleteBusy(true)
+            try {
+              await api.deleteStorageConnection(deleting.id)
+              setDeleting(null)
+              await Promise.all([load(), onChanged()])
+            } catch (reason) {
+              toast.error(reason instanceof Error ? reason.message : 'Unable to delete storage')
+            } finally {
+              setDeleteBusy(false)
+            }
+          }}>
+            {deleteBusy ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {deleteBusy ? 'Deleting…' : 'Delete connection'}
+          </Button>
+        </div>
+      </Dialog>
       {editing !== undefined && (
         <StorageConnectionDialog
           connection={editing}

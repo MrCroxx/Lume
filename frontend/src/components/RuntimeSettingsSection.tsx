@@ -9,7 +9,7 @@ import { Input } from './ui/input'
 export function RuntimeSettingsSection() {
   const [settings, setSettings] = useState<RuntimeSettings | null>(null)
   const [proxyCidrs, setProxyCidrs] = useState('')
-  const [uploadMegabytes, setUploadMegabytes] = useState(256)
+  const [uploadMegabytes, setUploadMegabytes] = useState(4096)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -29,8 +29,8 @@ export function RuntimeSettingsSection() {
     event.preventDefault()
     if (!settings) return
     const maxUploadBytes = uploadMegabytes * 1024 * 1024
-    if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
-      toast.error('Maximum upload must be a positive whole number of bytes')
+    if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes < 0) {
+      toast.error('Maximum upload must be a non-negative whole number of bytes')
       return
     }
     setSaving(true)
@@ -78,10 +78,10 @@ export function RuntimeSettingsSection() {
               required
             />
           </Field>
-          <Field label="Maximum upload (MiB)" description="Per file. Reverse proxies may enforce a smaller limit.">
+          <Field label="Maximum upload (MiB)" description="Per file. Default: 4096 MiB (4 GiB). Set 0 for unlimited. Reverse proxies may enforce a smaller limit.">
             <Input
               type="number"
-              min={1 / 1024 / 1024}
+              min={0}
               step="any"
               value={uploadMegabytes}
               onChange={(event) => setUploadMegabytes(Number(event.target.value))}

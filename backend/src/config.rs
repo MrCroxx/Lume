@@ -245,7 +245,7 @@ fn default_frontend_dist() -> String {
 }
 
 fn default_upload_limit() -> usize {
-    256 * 1024 * 1024
+    4 * 1024 * 1024 * 1024
 }
 
 fn default_session_hours() -> i64 {

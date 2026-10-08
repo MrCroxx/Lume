@@ -5,6 +5,8 @@
 [server]
 address = "0.0.0.0:8080"
 frontend_dist = "frontend/dist"
+# Per-file limit in bytes; 0 disables the application limit.
+max_upload_bytes = 4294967296
 
 [database]
 url = "sqlite://data/lume.db"

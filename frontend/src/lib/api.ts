@@ -104,6 +104,49 @@ function withQuery(path: string, values: Record<string, string | number | boolea
   return `${path}?${query}`
 }
 
+interface UploadOptions {
+  signal: AbortSignal
+  onProgress: (loaded: number) => void
+  onSent: () => void
+}
+
+function uploadWithProgress(url: string, file: File, options: UploadOptions): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const cleanup = () => options.signal.removeEventListener('abort', abort)
+    const abort = () => xhr.abort()
+    xhr.upload.onprogress = (event) => options.onProgress(event.loaded)
+    xhr.upload.onload = () => options.onSent()
+    xhr.onload = () => {
+      cleanup()
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+      } else {
+        const response = new Response(xhr.responseText, {
+          status: xhr.status || 500,
+          statusText: xhr.statusText,
+          headers: { 'Content-Type': xhr.getResponseHeader('Content-Type') || '' },
+        })
+        void errorMessage(response).then((message) => {
+          reject(new ApiError(message, xhr.status))
+          if (xhr.status === 401) authenticationListeners.forEach((listener) => listener())
+        })
+      }
+    }
+    xhr.onerror = () => { cleanup(); reject(new Error('Upload failed: network connection lost')) }
+    xhr.onabort = () => { cleanup(); reject(new DOMException('Upload cancelled', 'AbortError')) }
+    xhr.open('PUT', url)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    if (options.signal.aborted) {
+      reject(new DOMException('Upload cancelled', 'AbortError'))
+      return
+    }
+    options.signal.addEventListener('abort', abort, { once: true })
+    try { xhr.send(file) } catch (reason) { cleanup(); reject(reason) }
+  })
+}
+
 export const api = {
   session: () => requestJson<Session>('/api/auth/session'),
   loginHint: () => requestJson<LoginHint>('/api/auth/login-hint'),
@@ -136,13 +179,14 @@ export const api = {
     requestJson<FileEntry[]>(
       withQuery(`/api/search/${storageId}`, { path, q: query, limit: 200 }),
     ),
-  createDirectory: (storageId: string, path: string) =>
+  createDirectory: (storageId: string, path: string, signal?: AbortSignal) =>
     requestEmpty(`/api/files/${storageId}/directory`, {
       method: 'POST',
       body: JSON.stringify({ path }),
+      signal,
     }),
-  upload: (storageId: string, path: string, file: File) =>
-    requestEmpty(withQuery(`/api/files/${storageId}`, { path }), {
+  upload: (storageId: string, path: string, file: File, options?: UploadOptions) =>
+    options ? uploadWithProgress(withQuery(`/api/files/${storageId}`, { path }), file, options) : requestEmpty(withQuery(`/api/files/${storageId}`, { path }), {
       method: 'PUT',
       body: file,
       headers: { 'Content-Type': file.type || 'application/octet-stream' },

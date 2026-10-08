@@ -876,11 +876,6 @@ async fn update_runtime_settings(
 ) -> AppResult<Json<RuntimeSettingsView>> {
     require_admin(&auth)?;
     session_duration(request.session_hours).map_err(bad_request)?;
-    if request.max_upload_bytes == 0 {
-        return Err(AppError::BadRequest(
-            "maximum upload size must be greater than zero".into(),
-        ));
-    }
     let max_upload_bytes = i64::try_from(request.max_upload_bytes)
         .map_err(|_| AppError::BadRequest("maximum upload size is too large".into()))?;
     let trusted_proxy_cidrs = normalize_values(request.trusted_proxy_cidrs);

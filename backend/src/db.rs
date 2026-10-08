@@ -23,6 +23,7 @@ pub async fn connect(config: &Config) -> anyhow::Result<SqlitePool> {
         sqlx::query(*statement).execute(&pool).await?;
     }
     ensure_session_auth_method(&pool).await?;
+    migrate_upload_limit(&pool).await?;
     ensure_runtime_settings(&pool, config).await?;
     ensure_bootstrap_admin(&pool, config).await?;
     import_legacy_bypass_rules(&pool, config).await?;
@@ -69,6 +70,52 @@ async fn ensure_session_auth_method(pool: &SqlitePool) -> anyhow::Result<()> {
             .execute(pool)
             .await?;
     }
+    Ok(())
+}
+
+async fn migrate_upload_limit(pool: &SqlitePool) -> anyhow::Result<()> {
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let migrated: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM system_metadata WHERE key = 'unlimited_upload_migrated'",
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    if migrated == 0 {
+        // SQLite cannot alter CHECK constraints in place. Preserve all settings
+        // while rebuilding the table to allow zero as the unlimited sentinel.
+        sqlx::query(
+            r#"CREATE TABLE runtime_settings_new (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                session_hours INTEGER NOT NULL CHECK (session_hours > 0),
+                secure_cookies INTEGER NOT NULL DEFAULT 0,
+                max_upload_bytes INTEGER NOT NULL CHECK (max_upload_bytes >= 0),
+                trusted_proxy_cidrs_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )"#,
+        )
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            r#"INSERT INTO runtime_settings_new
+               (id, session_hours, secure_cookies, max_upload_bytes, trusted_proxy_cidrs_json, updated_at)
+               SELECT id, session_hours, secure_cookies, max_upload_bytes, trusted_proxy_cidrs_json, updated_at
+               FROM runtime_settings"#,
+        )
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("DROP TABLE runtime_settings")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("ALTER TABLE runtime_settings_new RENAME TO runtime_settings")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "INSERT INTO system_metadata (key, value) VALUES ('unlimited_upload_migrated', '1')",
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -166,14 +213,7 @@ pub(crate) const SCHEMA: &[&str] = &[
         can_manage INTEGER NOT NULL DEFAULT 0,
         UNIQUE(user_id, storage_id, path_prefix)
     )"#,
-    r#"CREATE TABLE IF NOT EXISTS runtime_settings (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        session_hours INTEGER NOT NULL CHECK (session_hours > 0),
-        secure_cookies INTEGER NOT NULL DEFAULT 0,
-        max_upload_bytes INTEGER NOT NULL CHECK (max_upload_bytes > 0),
-        trusted_proxy_cidrs_json TEXT NOT NULL DEFAULT '[]',
-        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    )"#,
+    RUNTIME_SETTINGS_SCHEMA,
     r#"CREATE TABLE IF NOT EXISTS trusted_access_rules (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -199,3 +239,90 @@ pub(crate) const SCHEMA: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_last_successful_logins_user ON last_successful_logins(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_trusted_access_user ON trusted_access_rules(user_id, enabled)",
 ];
+
+const RUNTIME_SETTINGS_SCHEMA: &str = r#"CREATE TABLE IF NOT EXISTS runtime_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        session_hours INTEGER NOT NULL CHECK (session_hours > 0),
+        secure_cookies INTEGER NOT NULL DEFAULT 0,
+        max_upload_bytes INTEGER NOT NULL CHECK (max_upload_bytes >= 0),
+        trusted_proxy_cidrs_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn upload_limit_migration_preserves_settings_and_allows_zero() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for statement in SCHEMA {
+            sqlx::query(sqlx::AssertSqlSafe(
+                statement.replace("max_upload_bytes >= 0", "max_upload_bytes > 0"),
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO runtime_settings VALUES (1, 48, 1, 12345, '[\"127.0.0.1/32\"]', 'original')")
+            .execute(&pool).await.unwrap();
+        migrate_upload_limit(&pool).await.unwrap();
+        let row: (i64, bool, i64, String, String) = sqlx::query_as(
+            "SELECT session_hours, secure_cookies, max_upload_bytes, trusted_proxy_cidrs_json, updated_at FROM runtime_settings",
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            row,
+            (
+                48,
+                true,
+                12345,
+                "[\"127.0.0.1/32\"]".into(),
+                "original".into()
+            )
+        );
+        sqlx::query("UPDATE runtime_settings SET max_upload_bytes = 0")
+            .execute(&pool)
+            .await
+            .unwrap();
+        migrate_upload_limit(&pool).await.unwrap();
+        let limit: i64 = sqlx::query_scalar("SELECT max_upload_bytes FROM runtime_settings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(limit, 0);
+        assert!(
+            sqlx::query("UPDATE runtime_settings SET max_upload_bytes = -1")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn new_settings_default_to_four_gib_and_accept_unlimited_config() {
+        for limit in [4 * 1024 * 1024 * 1024, 0] {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            for statement in SCHEMA {
+                sqlx::query(*statement).execute(&pool).await.unwrap();
+            }
+            migrate_upload_limit(&pool).await.unwrap();
+            let mut config = Config::default();
+            assert_eq!(config.server.max_upload_bytes, 4 * 1024 * 1024 * 1024);
+            config.server.max_upload_bytes = limit;
+            ensure_runtime_settings(&pool, &config).await.unwrap();
+            let stored: i64 = sqlx::query_scalar("SELECT max_upload_bytes FROM runtime_settings")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(stored, limit as i64);
+        }
+    }
+}
