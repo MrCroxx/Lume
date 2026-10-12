@@ -29,6 +29,7 @@ function App() {
   const [route, setRoute] = useState(readAppRoute)
   const [historyPosition, setHistoryPosition] = useState(initializeBrowserHistory)
   const [booting, setBooting] = useState(true)
+  const [authenticationNoticePending, setAuthenticationNoticePending] = useState(false)
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
@@ -39,12 +40,22 @@ function App() {
   }, [])
 
   useEffect(() => onAuthenticationRequired(() => {
+    if (session) setAuthenticationNoticePending(true)
     setSession(null)
     setStorages([])
     setStoragesLoaded(false)
     setAccountSettingsOpen(false)
     setMobileSidebarOpen(false)
-  }), [])
+  }), [session])
+
+  useEffect(() => {
+    if (booting || session || !authenticationNoticePending) return
+    toast.warning('Your session is no longer valid. Please sign in again.', {
+      id: 'authentication-required',
+      duration: 4000,
+    })
+    setAuthenticationNoticePending(false)
+  }, [authenticationNoticePending, booting, session])
 
   useEffect(() => {
     void bootstrap()
@@ -142,7 +153,6 @@ function App() {
             void loadStorages()
           }}
         />
-        <Toaster richColors position="bottom-right" />
       </>
     )
   }
