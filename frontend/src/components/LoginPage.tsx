@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, CheckCircle2, LockKeyhole } from 'lucide-react'
+import { Toaster } from 'sonner'
 import { api } from '../lib/api'
 import type { Session } from '../types'
 import { Brand } from './Brand'
@@ -104,6 +105,21 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
       <section className="flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-sm">
           <Brand size="md" className="mb-10 lg:hidden" textClassName="text-2xl" />
+          <div className="relative">
+            <Toaster
+              richColors
+              position="bottom-center"
+              style={{
+                position: 'absolute',
+                bottom: 16,
+                left: 0,
+                right: 'auto',
+                width: '100%',
+                transform: 'none',
+              }}
+              toastOptions={{ style: { width: '100%' } }}
+            />
+          </div>
           <p className="font-mono text-xs uppercase tracking-[0.2em] text-slate-400">Welcome back</p>
           <h2 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-slate-950">
             Sign in to your workspace
