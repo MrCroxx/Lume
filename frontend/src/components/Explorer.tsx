@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
+  ArrowDown,
   ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  ArrowUpDown,
   ChevronRight,
   File,
   FileArchive,
@@ -27,6 +29,8 @@ import { useUploadQueue } from '../lib/upload-context'
 import type { UploadItem } from '../lib/dropped-files'
 import { DropUploadOverlay } from './DropUploadOverlay'
 import { useEntrySelection } from '../lib/entry-selection'
+import { sortFileEntries, toggleFileSort } from '../lib/file-sort'
+import type { FileSort, FileSortField } from '../lib/file-sort'
 import { normalizeDirectoryPath, pathIsWithin } from '../lib/routes'
 import { cn, formatBytes, formatDate } from '../lib/utils'
 import type { FileEntry, Storage } from '../types'
@@ -39,6 +43,8 @@ import { SelectionCheckbox } from './SelectionCheckbox'
 export function Explorer({
   storage,
   path: currentPath,
+  sort,
+  onSortChange,
   canGoBack,
   canGoForward,
   onBack,
@@ -48,6 +54,8 @@ export function Explorer({
 }: {
   storage: Storage
   path: string
+  sort: FileSort
+  onSortChange: (nextSort: FileSort) => void
   canGoBack: boolean
   canGoForward: boolean
   onBack: () => void
@@ -231,7 +239,8 @@ export function Explorer({
   const breadcrumbs = useMemo(() => breadcrumbItems(path, storageRoot), [path, storageRoot])
   const parent = useMemo(() => parentDirectory(path, storageRoot), [path, storageRoot])
   const loading = listLoading || searchLoading
-  const visibleEntries = query.trim().length >= 2 ? searchResults : entries
+  const rawEntries = query.trim().length >= 2 ? searchResults : entries
+  const visibleEntries = useMemo(() => sortFileEntries(rawEntries, sort), [rawEntries, sort])
   const visiblePaths = useMemo(() => visibleEntries.map((entry) => entry.path), [visibleEntries])
   const selection = useEntrySelection(visiblePaths, `${storage.id}\0${path}\0${query}`)
   const selectedEntries = visibleEntries.filter((entry) => selection.selectedKeys.has(entry.path))
@@ -411,7 +420,7 @@ export function Explorer({
 
           <div className="overflow-x-auto overscroll-x-contain">
             <div className="min-w-[740px]">
-              <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px_44px] border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+              <div className="grid grid-cols-[44px_minmax(300px,1fr)_120px_190px_44px] items-center border-b border-slate-100 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
                 <SelectionCheckbox
                   checked={selection.allVisibleSelected}
                   indeterminate={selectedEntries.length > 0 && !selection.allVisibleSelected}
@@ -419,9 +428,24 @@ export function Explorer({
                   label="Select all visible items"
                   onToggle={selection.toggleAllVisible}
                 />
-                <span>Name</span>
-                <span>Size</span>
-                <span>Modified</span>
+                <SortHeaderButton
+                  field="name"
+                  label="Name"
+                  sort={sort}
+                  onToggle={(field) => onSortChange(toggleFileSort(sort, field))}
+                />
+                <SortHeaderButton
+                  field="size"
+                  label="Size"
+                  sort={sort}
+                  onToggle={(field) => onSortChange(toggleFileSort(sort, field))}
+                />
+                <SortHeaderButton
+                  field="modified_at"
+                  label="Modified"
+                  sort={sort}
+                  onToggle={(field) => onSortChange(toggleFileSort(sort, field))}
+                />
                 <span className="sr-only">Info</span>
               </div>
               {loading && visibleEntries.length === 0 ? (
@@ -527,6 +551,47 @@ export function Explorer({
         </form>
       </Dialog>
     </div>
+  )
+}
+
+function SortHeaderButton({
+  field,
+  label,
+  sort,
+  onToggle,
+}: {
+  field: FileSortField
+  label: string
+  sort: FileSort
+  onToggle: (field: FileSortField) => void
+}) {
+  const active = sort.field === field
+  const Icon = active ? (sort.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown
+  const nextLabel = active
+    ? `Sort by ${label} (${sort.direction === 'asc' ? 'ascending' : 'descending'}, click to reverse)`
+    : `Sort by ${label}`
+
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(field)}
+      aria-label={nextLabel}
+      title={nextLabel}
+      className={cn(
+        'group -ml-1.5 inline-flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-1 uppercase tracking-[0.14em] transition-colors hover:bg-slate-100/80 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400',
+        active && 'font-semibold text-slate-800',
+      )}
+    >
+      <span>{label}</span>
+      <Icon
+        className={cn(
+          'size-3 shrink-0 transition-opacity',
+          active
+            ? 'text-slate-700 opacity-100'
+            : 'text-slate-400 opacity-35 group-hover:opacity-100 group-focus-visible:opacity-100',
+        )}
+      />
+    </button>
   )
 }
 

@@ -11,6 +11,8 @@ import { LoginPage } from './components/LoginPage'
 import { MobileSidebar, Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
 import { api, ApiError, onAuthenticationRequired } from './lib/api'
+import { DEFAULT_FILE_SORT } from './lib/file-sort'
+import type { FileSort } from './lib/file-sort'
 import {
   initializeBrowserHistory,
   normalizeDirectoryPath,
@@ -33,6 +35,7 @@ function App() {
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [fileSort, setFileSort] = useState<FileSort>(DEFAULT_FILE_SORT)
 
   const navigate = useCallback((nextRoute: AppRoute, replace = false) => {
     setHistoryPosition(writeAppRoute(nextRoute, replace))
@@ -198,6 +201,8 @@ function App() {
               key={`${selectedStorage.id}\0${selectedPath}`}
               storage={selectedStorage}
               path={selectedPath}
+              sort={fileSort}
+              onSortChange={setFileSort}
               canGoBack={historyPosition.index > 0}
               canGoForward={historyPosition.index < historyPosition.maxIndex}
               onBack={() => window.history.back()}
